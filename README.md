@@ -86,6 +86,23 @@ Override the upscaler location on Unix:
 export REALESRGAN_BIN=/path/to/realesrgan-ncnn-vulkan
 ```
 
+### Models
+
+The repository ships the five base Real-ESRGAN ncnn models in `models/`. To
+add the recommended `realesr-general-x4v3` (best for noisy YouTube sources)
+or community extras:
+
+```bash
+./download_models.sh                # base + realesr-general-x4v3
+./download_models.sh --extras       # also fetch community extras
+./download_models.sh --list
+
+# Windows
+.\windows\download-models.ps1
+```
+
+Full catalogue, URLs, and licensing notes: [`models/README.md`](models/README.md).
+
 ---
 
 ## Usage (Linux / macOS)
