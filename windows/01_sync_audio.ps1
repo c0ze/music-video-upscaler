@@ -7,6 +7,9 @@ param(
     [string]$YouTubeUrl
 )
 
+$WinDir = $PSScriptRoot
+$YtDlpExe = Join-Path $WinDir "yt-dlp.exe"
+
 # Setup paths
 $videoPath = Convert-Path $InputVideo
 $audioPath = Convert-Path $InputAudio
@@ -22,7 +25,7 @@ Write-Host "Audio: $audioPath"
 # Download YT if needed
 if ($YouTubeUrl -and -not (Test-Path $ytAudio)) {
     Write-Host "Downloading YouTube audio..."
-    & .\yt-dlp.exe -x --audio-format wav -o $ytAudio "$YouTubeUrl" 2>&1 | Out-Null
+    & $YtDlpExe -x --audio-format wav -o $ytAudio "$YouTubeUrl" 2>&1 | Out-Null
 }
 
 $videoSilence = 0.0

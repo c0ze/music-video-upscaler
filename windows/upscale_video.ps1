@@ -69,37 +69,62 @@ Write-Host "DEBUG: Script loaded successfully" -ForegroundColor DarkGray
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
-$VideoBaseName = [System.IO.Path]::GetFileNameWithoutExtension($InputVideo)
-$Engine = "realesrgan"
-$OutputName = "${VideoBaseName}_${Engine}_${Model}_${Scale}x_HQ"
+$WinDir = $PSScriptRoot
+$RepoRoot = Split-Path -Parent $WinDir
 
 # ============================================================================
 # PATHS (auto-configured)
 # ============================================================================
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-# Get absolute paths and source directory
-$InputVideoPath = if ([System.IO.Path]::IsPathRooted($InputVideo)) { $InputVideo } else { Join-Path $ScriptDir $InputVideo }
-if (-not (Test-Path -LiteralPath $InputVideoPath)) {
-    # Try as-is (might be relative to current dir)
-    $InputVideoPath = [System.IO.Path]::GetFullPath($InputVideo)
+if ([System.IO.Path]::IsPathRooted($InputVideo)) {
+    $InputVideoPath = $InputVideo
 }
+else {
+    $tryCwd = Join-Path (Get-Location) $InputVideo
+    $tryRepo = Join-Path $RepoRoot $InputVideo
+    if (Test-Path -LiteralPath $tryCwd) {
+        $InputVideoPath = [System.IO.Path]::GetFullPath($tryCwd)
+    }
+    elseif (Test-Path -LiteralPath $tryRepo) {
+        $InputVideoPath = [System.IO.Path]::GetFullPath($tryRepo)
+    }
+    else {
+        $InputVideoPath = [System.IO.Path]::GetFullPath($InputVideo)
+    }
+}
+
+if ([System.IO.Path]::IsPathRooted($InputAudio)) {
+    $InputAudioPath = $InputAudio
+}
+else {
+    $tryCwd = Join-Path (Get-Location) $InputAudio
+    $srcGuess = Split-Path -Parent $InputVideoPath
+    $trySrc = Join-Path $srcGuess $InputAudio
+    $tryRepo = Join-Path $RepoRoot $InputAudio
+    if (Test-Path -LiteralPath $tryCwd) {
+        $InputAudioPath = [System.IO.Path]::GetFullPath($tryCwd)
+    }
+    elseif (Test-Path -LiteralPath $trySrc) {
+        $InputAudioPath = [System.IO.Path]::GetFullPath($trySrc)
+    }
+    elseif (Test-Path -LiteralPath $tryRepo) {
+        $InputAudioPath = [System.IO.Path]::GetFullPath($tryRepo)
+    }
+    else {
+        $InputAudioPath = [System.IO.Path]::GetFullPath($InputAudio)
+    }
+}
+
+$VideoBaseName = [System.IO.Path]::GetFileNameWithoutExtension($InputVideoPath)
+$Engine = "realesrgan"
+$OutputName = "${VideoBaseName}_${Engine}_${Model}_${Scale}x_HQ"
 
 $SourceDir = Split-Path -Parent $InputVideoPath
-if (-not $SourceDir) { $SourceDir = $ScriptDir }
+if (-not $SourceDir) { $SourceDir = $RepoRoot }
 
-# Get absolute audio path
-$InputAudioPath = if ([System.IO.Path]::IsPathRooted($InputAudio)) { $InputAudio } else { Join-Path $SourceDir $InputAudio }
-if (-not (Test-Path -LiteralPath $InputAudioPath)) {
-    # Try as-is
-    $InputAudioPath = [System.IO.Path]::GetFullPath($InputAudio)
-}
+$RealESRGAN = Join-Path $WinDir "realesrgan-ncnn-vulkan.exe"
+$YtDlp = Join-Path $WinDir "yt-dlp.exe"
 
-# Tools are strictly in the root directory where the script lives
-$RealESRGAN = Join-Path $ScriptDir "realesrgan-ncnn-vulkan.exe"
-$YtDlp = Join-Path $ScriptDir "yt-dlp.exe"
-
-# Temporary folders are now subdirectories of the source folder
 $FramesDir = Join-Path $SourceDir "tmp_frames"
 $UpscaledDir = Join-Path $SourceDir "tmp_upscaled_${Scale}x"
 $OutputDir = Join-Path $SourceDir "output"
@@ -308,7 +333,13 @@ else {
     $startTime = Get-Date
     
     Write-Host "  Using Real-ESRGAN with $Model model..." -ForegroundColor DarkGray
-    & $RealESRGAN -i "$FramesDir" -o "$UpscaledDir" -n $Model -s $Scale -f png
+    Push-Location $RepoRoot
+    try {
+        & $RealESRGAN -i "$FramesDir" -o "$UpscaledDir" -n $Model -s $Scale -f png
+    }
+    finally {
+        Pop-Location
+    }
     
     $elapsed = (Get-Date) - $startTime
     $upscaledCount = (Get-ChildItem -Path $UpscaledDir -Filter "*.png").Count

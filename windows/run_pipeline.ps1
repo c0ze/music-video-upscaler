@@ -6,11 +6,13 @@ param(
     [int]$Scale = 4
 )
 
+$WinDir = $PSScriptRoot
 $TargetFolder = Convert-Path $TargetFolder
+
 Write-Host "Running Upscale Pipeline on: $TargetFolder" -ForegroundColor Magenta
 
 # 0. Sanitize
-.\00_sanitize.ps1 -Directory $TargetFolder
+& "$WinDir\00_sanitize.ps1" -Directory $TargetFolder
 
 # Find video and audio files (simple heuristic: largest webm/mkv/mp4 is video, largest flac/wav is audio)
 $videoFile = Get-ChildItem $TargetFolder -Include *.webm, *.mkv, *.mp4 -Recurse | Sort-Object Length -Descending | Select-Object -First 1
@@ -25,24 +27,26 @@ Write-Host "Found Video: $($videoFile.Name)"
 Write-Host "Found Audio: $($audioFile.Name)"
 
 # 1. Sync
-.\01_sync_audio.ps1 -InputVideo $videoFile.FullName -InputAudio $audioFile.FullName -YouTubeUrl $YouTubeUrl
+& "$WinDir\01_sync_audio.ps1" -InputVideo $videoFile.FullName -InputAudio $audioFile.FullName -YouTubeUrl $YouTubeUrl
 
 # 2. Extract
 $framesDir = Join-Path $TargetFolder "tmp_frames"
-.\02_extract.ps1 -InputVideo $videoFile.FullName -OutputFramesDir $framesDir
+& "$WinDir\02_extract.ps1" -InputVideo $videoFile.FullName -OutputFramesDir $framesDir
 
 # 3. Upscale
 $upscaledDir = Join-Path $TargetFolder "tmp_upscaled_${Scale}x"
-.\03_upscale.ps1 -InputFramesDir $framesDir -OutputUpscaledDir $upscaledDir -Scale $Scale
+& "$WinDir\03_upscale.ps1" -InputFramesDir $framesDir -OutputUpscaledDir $upscaledDir -Scale $Scale
 
 # 4. Mux
 $videoBase = $videoFile.BaseName
 $outputName = "${videoBase}_realesrgan_x4plus_${Scale}x_HQ.mkv"
-$outputDir = Join-Path $TargetFolder ".." "METAL_VIDS_UPSCALED_FLAC"
+$outputDir = Join-Path (Split-Path -Parent $TargetFolder) "METAL_VIDS_UPSCALED_FLAC"
 $outputSubDir = Split-Path -Leaf $TargetFolder
-$finalOutput = Join-Path $outputDir $outputSubDir
-$finalOutputFile = Join-Path $finalOutput $outputName
+$finalOutputDir = Join-Path $outputDir $outputSubDir
+$finalOutputFile = Join-Path $finalOutputDir $outputName
 
-.\04_mux.ps1 -FramesDir $upscaledDir -AudioPath (Join-Path $TargetFolder "${videoBase}_synced.flac") -OriginalVideo $videoFile.FullName -OutputVideo $finalOutputFile
+if (-not (Test-Path $finalOutputDir)) { New-Item -ItemType Directory -Force -Path $finalOutputDir | Out-Null }
+
+& "$WinDir\04_mux.ps1" -FramesDir $upscaledDir -AudioPath (Join-Path $TargetFolder "${videoBase}_synced.flac") -OriginalVideo $videoFile.FullName -OutputVideo $finalOutputFile
 
 Write-Host "Pipeline Finished!" -ForegroundColor Magenta

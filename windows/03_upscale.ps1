@@ -7,6 +7,10 @@ param(
     [string]$Model = "realesrgan-x4plus"
 )
 
+$WinDir = $PSScriptRoot
+$RepoRoot = Split-Path -Parent $WinDir
+$RealESRGANExe = Join-Path $WinDir "realesrgan-ncnn-vulkan.exe"
+
 if (-not $OutputUpscaledDir) {
     # Default sibling dir
     $parent = Split-Path -Parent (Convert-Path $InputFramesDir)
@@ -42,10 +46,16 @@ else {
         Copy-Item $f.FullName -Destination $batchDir
     }
     
-    # Run upscale on batch dir
+    # Run upscale on batch dir (models live under repo ./models)
     Write-Host "Running RealESRGAN on batch..."
     Write-Host "Model: $Model (x$Scale)"
-    & .\realesrgan-ncnn-vulkan.exe -i $batchDir -o $OutputUpscaledDir -n $Model -s $Scale -f png
+    Push-Location $RepoRoot
+    try {
+        & $RealESRGANExe -i $batchDir -o $OutputUpscaledDir -n $Model -s $Scale -f png
+    }
+    finally {
+        Pop-Location
+    }
     
     # Clean batch dir
     Remove-Item $batchDir -Recurse -Force
