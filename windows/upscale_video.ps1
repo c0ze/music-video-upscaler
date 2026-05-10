@@ -53,8 +53,15 @@ param(
     [string]$InputAudio,
 
     [Parameter(Mandatory = $false)]
-    [ValidateSet("realesrgan-x4plus", "realesr-animevideov3", "realesrnet-x4plus", "realesrgan-x4plus-anime")]
-    [string]$Model = "realesrgan-x4plus",
+    [ValidateSet(
+        "realesr-general-x4v3",
+        "realesr-general-wdn-x4v3",
+        "realesrgan-x4plus",
+        "realesrgan-x4plus-anime",
+        "realesrnet-x4plus",
+        "realesr-animevideov3"
+    )]
+    [string]$Model = "realesr-general-x4v3",
 
     [Parameter(Mandatory = $false)]
     [string]$YouTubeUrl = "",

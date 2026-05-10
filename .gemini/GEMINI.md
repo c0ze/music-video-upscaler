@@ -16,11 +16,14 @@ The workflow takes YouTube music videos, upscales them using AI, and muxes with 
 
 | Source Resolution | Scale Factor | Model | Final Resolution |
 |-------------------|--------------|-------|------------------|
-| < 1080p (e.g. 480p, 720p) | 4x | `realesrgan-x4plus` | Up to 4K |
-| 1080p | 2x | `realesr-animevideov3` | 4K (3840×2160) |
+| < 1080p (e.g. 240p, 360p, very noisy YouTube) | 4x | `realesr-general-wdn-x4v3` | Up to 4K |
+| < 1080p (e.g. 480p, 720p typical YouTube) | 4x | `realesr-general-x4v3` *(default)* | Up to 4K |
+| 1080p clean | 2x | `realesr-animevideov3` | 4K (3840×2160) |
+| 1080p photographic / pristine | 2x | `realesrgan-x4plus` *(rarely best)* | 4K |
 
 > [!IMPORTANT]
 > Final video should **never exceed 4K** (3840×2160 or 4096×2160).
+> The pipeline default model is `realesr-general-x4v3` — the `-wdn-x4v3` twin is the stronger-denoise variant for very compressed sources.
 > The `realesr-animevideov3` model has native 2x support and avoids tiling artifacts.
 
 ---
@@ -92,9 +95,15 @@ c:\music_videos\
 
 | Model | Best For | Scales |
 |-------|----------|--------|
-| `realesrgan-x4plus` | General real-world content, 4x upscale | 4x |
-| `realesr-animevideov3` | Anime/video content, native 2x/3x/4x | 2x, 3x, 4x |
-| `realesrgan-x4plus-anime` | Anime with 4x upscale | 4x |
+| `realesr-general-x4v3` *(default)* | Compressed YouTube sources (any res); preserves texture | 4x |
+| `realesr-general-wdn-x4v3` | Same architecture, stronger denoising for 240p–360p | 4x |
+| `realesrgan-x4plus` | Genuinely clean live-action sources (BD/DVD remasters, official 1080p) | 4x |
+| `realesr-animevideov3` | Anime/animation content, native 2x/3x/4x | 2x, 3x, 4x |
+| `realesrgan-x4plus-anime` | Anime stills with 4x upscale | 4x |
+
+The standalone Real-ESRGAN ncnn-vulkan binary does **not** support a `-dn`
+denoise flag (Python-only). To control denoise strength on ncnn, switch model
+between `realesr-general-x4v3` and `realesr-general-wdn-x4v3`.
 
 ---
 

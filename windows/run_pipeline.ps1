@@ -3,7 +3,16 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$TargetFolder,
     [string]$YouTubeUrl,
-    [int]$Scale = 4
+    [int]$Scale = 4,
+    [ValidateSet(
+        "realesr-general-x4v3",
+        "realesr-general-wdn-x4v3",
+        "realesrgan-x4plus",
+        "realesrgan-x4plus-anime",
+        "realesrnet-x4plus",
+        "realesr-animevideov3"
+    )]
+    [string]$Model = "realesr-general-x4v3"
 )
 
 $WinDir = $PSScriptRoot
@@ -35,11 +44,11 @@ $framesDir = Join-Path $TargetFolder "tmp_frames"
 
 # 3. Upscale
 $upscaledDir = Join-Path $TargetFolder "tmp_upscaled_${Scale}x"
-& "$WinDir\03_upscale.ps1" -InputFramesDir $framesDir -OutputUpscaledDir $upscaledDir -Scale $Scale
+& "$WinDir\03_upscale.ps1" -InputFramesDir $framesDir -OutputUpscaledDir $upscaledDir -Scale $Scale -Model $Model
 
 # 4. Mux
 $videoBase = $videoFile.BaseName
-$outputName = "${videoBase}_realesrgan_x4plus_${Scale}x_HQ.mkv"
+$outputName = "${videoBase}_realesrgan_${Model}_${Scale}x_HQ.mkv"
 $outputDir = Join-Path (Split-Path -Parent $TargetFolder) "METAL_VIDS_UPSCALED_FLAC"
 $outputSubDir = Split-Path -Leaf $TargetFolder
 $finalOutputDir = Join-Path $outputDir $outputSubDir

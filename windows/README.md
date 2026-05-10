@@ -40,14 +40,15 @@ Manual stages (run from anywhere, paths can be relative):
 .\00_sanitize.ps1 -Directory ..\artist
 .\01_sync_audio.ps1 -InputVideo ..\artist\song.mp4 -InputAudio ..\artist\song.flac -YouTubeUrl "https://..."
 .\02_extract.ps1 -InputVideo ..\artist\song.mp4 -OutputFramesDir ..\artist\tmp_frames
-.\03_upscale.ps1 -InputFramesDir ..\artist\tmp_frames -OutputUpscaledDir ..\artist\tmp_upscaled_4x -Scale 4 -Model realesrgan-x4plus
+.\03_upscale.ps1 -InputFramesDir ..\artist\tmp_frames -OutputUpscaledDir ..\artist\tmp_upscaled_4x -Scale 4 -Model realesr-general-x4v3
 .\04_mux.ps1 -FramesDir ..\artist\tmp_upscaled_4x -AudioPath ..\artist\song_synced.flac -OriginalVideo ..\artist\song.mp4 -OutputVideo ..\output\song_HQ.mkv
 ```
 
 Standalone, full-featured driver:
 
 ```powershell
-.\upscale_video.ps1 -InputVideo "..\artist\video.mp4" -InputAudio "..\artist\audio.flac" -Scale 4 -Model realesrgan-x4plus -OutputFormat mkv -YouTubeUrl "https://..."
+.\upscale_video.ps1 -InputVideo "..\artist\video.mp4" -InputAudio "..\artist\audio.flac" -Scale 4 -OutputFormat mkv -YouTubeUrl "https://..."
+# Defaults to -Model realesr-general-x4v3. Override with -Model realesr-general-wdn-x4v3 for very noisy 240p–360p sources.
 ```
 
 Progress monitor (separate console):
@@ -60,10 +61,16 @@ Progress monitor (separate console):
 
 Pass any model name from `..\models\*.param` via `-Model`:
 
-- `realesrgan-x4plus` — general purpose, photographic content
+- **`realesr-general-x4v3`** *(default)* — best for compressed YouTube sources
+- `realesr-general-wdn-x4v3` — same architecture, stronger denoising (240p–360p)
+- `realesrgan-x4plus` — only for genuinely clean 720p / 1080p sources
 - `realesrgan-x4plus-anime` — anime stills, 4×
-- `realesr-animevideov3` — anime/animation video, supports 2/3/4×
+- `realesr-animevideov3` — anime/animation video, supports `-Scale 2/3/4`
 - (drop additional `.bin/.param` pairs into `..\models\` to extend)
 
-See `..\docs\upscalers-2026.md` for higher-quality alternatives that work on
-Windows (FlashVSR, SeedVR2, Real-CUGAN, waifu2x).
+The standalone Real-ESRGAN ncnn-vulkan binary does **not** support the `-dn`
+denoise flag (Python-only). Switch the model name to control denoise strength.
+
+See `..\models\README.md` for the full catalogue and `..\docs\upscalers-2026.md`
+for higher-quality alternatives that work on Windows (FlashVSR, SeedVR2,
+Real-CUGAN, waifu2x).

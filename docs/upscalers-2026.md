@@ -18,12 +18,17 @@ better results on heavy YouTube compression artefacts.
 
 ## TL;DR — what to actually use
 
+The pipeline default is now **`realesr-general-x4v3`** (committed to `models/`,
+auto-selected by every entry script). Switch model name when noise level
+demands it; there is no `-dn` knob on the ncnn binary (Python-only — see note
+at the bottom of the next section).
+
 | Source quality | Best output / least friction | Best output / willing to invest |
 |----------------|------------------------------|---------------------------------|
-| 240p–360p, heavy block artefacts | `realesr-general-x4v3` *(Real-ESRGAN, with `-dn 0.5`–`1.0`)* | **FlashVSR** or **SeedVR2** in ComfyUI |
-| 480p typical YouTube rip | `realesr-general-x4v3` *(`-dn 0.3`–`0.5`)* | **RealBasicVSR** or **SeedVR2** |
-| 720p / 1080p clean | `realesrgan-x4plus` (current default) at 2× | **VideoGigaGAN-style** or **SeedVR2** at 2× |
-| Anime / animated music videos | `realesr-animevideov3` (current bundled model) | **APISR** (anime-specific) or **Real-CUGAN** |
+| 240p–360p, heavy block artefacts | `realesr-general-wdn-x4v3` (stronger denoise twin) | **FlashVSR** or **SeedVR2** in ComfyUI |
+| 480p typical YouTube rip | `realesr-general-x4v3` *(default)* | **RealBasicVSR** or **SeedVR2** |
+| 720p / 1080p clean | `realesr-general-x4v3` *(default)* — or `realesrgan-x4plus` at 2× when source is genuinely clean | **VideoGigaGAN-style** or **SeedVR2** at 2× |
+| Anime / animated music videos | `realesr-animevideov3` (bundled, native 2/3/4×) | **APISR** (anime-specific) or **Real-CUGAN** |
 
 Why these picks for *your* machines:
 
@@ -40,25 +45,30 @@ Why these picks for *your* machines:
 
 ---
 
-## Why the current `realesrgan-x4plus` is not always the right model
+## Why we moved off `realesrgan-x4plus` as the default
 
-The bundled `realesrgan-x4plus` is a *general* GAN trained on real-world
-photographic degradations. It tends to over-sharpen YouTube compression
-artefacts and can introduce halos around high-contrast edges (concert
-lighting, drum kits, white spotlights against black stage).
+`realesrgan-x4plus` is a *general* GAN trained on real-world photographic
+degradations. It tends to over-sharpen YouTube compression artefacts and can
+introduce halos around high-contrast edges (concert lighting, drum kits,
+white spotlights against black stage). Now the pipeline defaults instead to:
 
-Better defaults to ship with the same binary:
+- **`realesr-general-x4v3`** *(default, ~2.4 MB)*: SRVGGNetCompact trained for
+  real-world degradations. Smaller and faster than `x4plus`, and clearly
+  cleaner on noisy YouTube re-encodes. Single biggest free quality win.
+- **`realesr-general-wdn-x4v3`** *(included)*: same architecture, weights
+  trained for stronger denoising. Use when v3 still leaves visible blocking.
+- **`realesr-animevideov3`** *(included)*: correct choice for anime /
+  animated lyric videos; native 2/3/4× variants.
 
-- **`realesr-general-x4v3`** (≈17 MB, included in modern Real-ESRGAN releases):
-  fast SRVGGNetCompact with a controllable denoise strength via `-dn 0..1`. For
-  noisy YouTube re-encodes this model is the single biggest quality win you
-  can get without changing infrastructure.
-- **`realesr-animevideov3`** (already bundled): correct choice for anime /
-  animated lyric videos.
+All three live in `models/` and are auto-loaded by `-n <name>` — no extra
+download, no flag plumbing.
 
-Real-ESRGAN's ncnn release also ships `realesr-animevideov3` plus the v0.3.0
-general-x4v3 weights. We can drop them into `models/` and select via the
-existing `-n` argument. No code changes required.
+> **`-dn` is Python-only.** The standalone `realesrgan-ncnn-vulkan` binary's
+> CLI is `i:o:s:t:m:n:g:j:f:vxh` — no `-dn` option. xinntao's PyTorch
+> `inference_realesrgan.py` interpolates between `x4v3` and `wdn-x4v3` at
+> runtime via `-dn`; the ncnn binary cannot. To pick the equivalent on ncnn
+> just switch the model name. If you really need a continuous denoise dial,
+> run the Python pipeline directly.
 
 ---
 
@@ -169,15 +179,23 @@ The M4 Mac mini has CPU + GPU + Apple Neural Engine. Three useful tiers:
 
 ## How this maps onto the existing repo
 
-You don't need to change the pipeline architecture to get most of the wins:
+The biggest free win — switching the default model — is already done.
+`realesr-general-x4v3` is the baked-in default for `03_upscale.sh`,
+`upscale_video.sh`, `run_pipeline.sh`, and the matching `windows/*.ps1`.
 
-1. **Drop `realesr-general-x4v3.bin/.param` and any other model `.param/.bin`
-   pairs into `models/`.** Then run with:
+To go further you don't need to change the pipeline architecture, just swap a
+model name or a binary:
+
+1. **Stronger denoise on very noisy sources.** Override the default model:
    ```bash
-   ./03_upscale.sh ./artist/tmp_frames ./artist/tmp_upscaled_4x 4 realesr-general-x4v3
+   MODEL=realesr-general-wdn-x4v3 ./run_pipeline.sh ./artist
+   # or, manual stage:
+   ./03_upscale.sh ./artist/tmp_frames ./artist/tmp_upscaled_4x 4 realesr-general-wdn-x4v3
    ```
-   For very noisy 240p/360p sources also add `-dn 0.6`–`1.0` (we can extend
-   `03_upscale.sh` to forward `-dn` if you want it as a flag).
+   PowerShell:
+   ```powershell
+   .\windows\run_pipeline.ps1 -TargetFolder .\artist -Model realesr-general-wdn-x4v3
+   ```
 
 2. **Swap the binary** for `realcugan-ncnn-vulkan` or `waifu2x-ncnn-vulkan`
    when the source is animated:
@@ -196,19 +214,18 @@ You don't need to change the pipeline architecture to get most of the wins:
 
 ---
 
-## Concrete next steps I'd recommend
+## Possible follow-ups
 
-1. Extend `03_upscale.sh` and `windows/03_upscale.ps1` to forward an optional
-   `-dn` denoise strength when the model is `realesr-general-x4v3`.
-2. Add a `models/README.md` listing model files and download URLs (general
-   x4v3, animevideov3, Real-CUGAN models, waifu2x models). Keep weights out
-   of git via the existing `.gitignore`.
-3. Add a `tools/install-realcugan.sh` companion next to `install-dependencies.sh`
+1. Add a `tools/install-realcugan.sh` companion next to `install-dependencies.sh`
    for the AMD/Linux box (it's a separate ncnn binary).
-4. (Optional, later) Stand up a minimal ComfyUI launcher script under
+2. (Optional, later) Stand up a minimal ComfyUI launcher script under
    `extras/comfyui/` that points at SeedVR2 + FlashVSR custom nodes, with
    ROCm and MPS environment toggles. Use it only when a specific clip
    warrants the cost.
+3. If continuous `-dn` interpolation between `x4v3` and `wdn-x4v3` becomes
+   important, add a thin Python wrapper around `inference_realesrgan.py`
+   that the pipeline can fall back to via `MODEL=python:realesr-general-x4v3:0.4`
+   or similar. Probably not worth it for this flow.
 
 ---
 

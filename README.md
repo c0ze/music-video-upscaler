@@ -88,12 +88,13 @@ export REALESRGAN_BIN=/path/to/realesrgan-ncnn-vulkan
 
 ### Models
 
-The repository ships the five base Real-ESRGAN ncnn models in `models/`. To
-add the recommended `realesr-general-x4v3` (best for noisy YouTube sources)
-or community extras:
+The repository ships seven Real-ESRGAN ncnn models in `models/`, including
+**`realesr-general-x4v3`** (the new pipeline default, best for noisy YouTube
+sources) and its `-wdn` variant for stronger denoising. To re-fetch / verify or
+add community extras:
 
 ```bash
-./download_models.sh                # base + realesr-general-x4v3
+./download_models.sh                # base + realesr-general-x4v3 (idempotent)
 ./download_models.sh --extras       # also fetch community extras
 ./download_models.sh --list
 
@@ -119,7 +120,7 @@ Manual steps:
 ./00_sanitize.sh ./artist
 ./01_sync_audio.sh ./artist/song.mp4 ./artist/song.flac "https://..."
 ./02_extract.sh ./artist/song.mp4 ./artist/tmp_frames
-./03_upscale.sh ./artist/tmp_frames ./artist/tmp_upscaled_4x 4 realesrgan-x4plus
+./03_upscale.sh ./artist/tmp_frames ./artist/tmp_upscaled_4x 4 realesr-general-x4v3
 ./04_mux.sh ./artist/tmp_upscaled_4x ./artist/song_synced.flac ./output.mkv ./artist/song.mp4
 ```
 
@@ -127,7 +128,11 @@ Standalone orchestrator:
 
 ```bash
 ./upscale_video.sh ./artist/video.mp4 ./artist/audio.flac "https://..."
-# Optional env: SCALE=4 MODEL=realesrgan-x4plus OUTPUT_FORMAT=mkv SKIP_EXTRACT=1 ...
+# Optional env:
+#   SCALE=4 OUTPUT_FORMAT=mkv SKIP_EXTRACT=1
+#   MODEL=realesr-general-x4v3      (default — best for noisy YouTube)
+#   MODEL=realesr-general-wdn-x4v3  (stronger denoise for very noisy 240p/360p)
+#   MODEL=realesrgan-x4plus         (only for already-clean 720p/1080p sources)
 ```
 
 Monitor progress (another terminal):
@@ -164,15 +169,26 @@ Progress:
 
 ## Upscaling guidelines
 
-| Source resolution | Scale | Typical model | Notes |
-|---------------------|-------|---------------|--------|
-| 240p–360p (very noisy) | 4× | `realesr-general-x4v3` (with `-dn 0.5–1.0`) | Best for heavy YouTube compression |
-| 480p typical YouTube | 4× | `realesr-general-x4v3` (with `-dn 0.3–0.5`) | Cleaner than `x4plus` on noisy live action |
-| 720p / 1080p clean | 2×–4× | `realesrgan-x4plus` | Default for photographic content |
-| Anime / animated | 2×–4× | `realesr-animevideov3` | Bundled video model |
+The pipeline default is **`realesr-general-x4v3`** — it handles real-world
+YouTube degradation (re-encoding, mosquito noise, blocky compression) much
+better than `realesrgan-x4plus` and won't over-sharpen halos around stage
+lighting or drum kits.
 
-Models shipped under `models/` match `-n` names passed to Real-ESRGAN
-(`realesrgan-x4plus`, `realesr-animevideov3`, `realesr-general-x4v3`, …).
+| Source resolution      | Scale | Recommended model              | Notes                                                                 |
+|------------------------|-------|--------------------------------|-----------------------------------------------------------------------|
+| 240p–360p (very noisy) | 4×    | `realesr-general-wdn-x4v3`     | "WDN" twin = stronger denoising                                       |
+| 480p typical YouTube   | 4×    | `realesr-general-x4v3` *(default)* | Best general model for compressed sources                          |
+| 720p / 1080p clean     | 2×–4× | `realesr-general-x4v3` *(default)* or `realesrgan-x4plus` | `x4plus` only when source is genuinely clean |
+| Anime / animated       | 2×–4× | `realesr-animevideov3`         | Bundled video model with native 2×/3×/4× variants                     |
+
+Pass a non-default with `MODEL=… ./upscale_video.sh` (POSIX) or
+`-Model …` (PowerShell). Models shipped under `models/` match `-n` names
+passed to Real-ESRGAN.
+
+> Note: the standalone ncnn-vulkan binary does **not** accept `-dn` (that flag
+> only exists in the upstream Python `inference_realesrgan.py`). On ncnn you
+> control denoise strength by switching between `realesr-general-x4v3`
+> (preserves more texture) and `realesr-general-wdn-x4v3` (max denoise).
 
 For an in-depth comparison of newer models (FlashVSR, SeedVR2, RealBasicVSR,
 Real-CUGAN, waifu2x, APISR, PiperSR/CoreML on Apple Silicon, ROCm on

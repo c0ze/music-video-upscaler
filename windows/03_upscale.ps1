@@ -4,7 +4,7 @@ param(
     [string]$InputFramesDir,
     [string]$OutputUpscaledDir,
     [int]$Scale = 4,
-    [string]$Model = "realesrgan-x4plus"
+    [string]$Model = "realesr-general-x4v3"
 )
 
 $WinDir = $PSScriptRoot

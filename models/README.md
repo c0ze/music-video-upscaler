@@ -40,7 +40,7 @@ Source archive (any platform; identical models inside):
 
 | Model name (`-n`) | Scale | Size | Best for |
 |---|---|---|---|
-| `realesrgan-x4plus` | 4× | 33 MB | Live-action, photographic; default for clean 720p / 1080p sources |
+| `realesrgan-x4plus` | 4× | 33 MB | Live-action, photographic; only when the source is genuinely clean (BD/DVD remasters, official-channel 1080p) |
 | `realesrgan-x4plus-anime` | 4× | 9 MB | Anime stills / lyric-card-style frames |
 | `realesr-animevideov3-x2` | 2× | 1.2 MB | Animation video at 2× (preserves temporal consistency) |
 | `realesr-animevideov3-x3` | 3× | 1.2 MB | Animation video at 3× |
@@ -53,7 +53,13 @@ License: BSD-3-Clause (Real-ESRGAN upstream).
 
 ---
 
-## Recommended add-on: `realesr-general-x4v3`
+## Pipeline default: `realesr-general-x4v3`
+
+This is now the **default model** used by `03_upscale.sh`, `upscale_video.sh`,
+`run_pipeline.sh`, and their PowerShell counterparts. It handles real-world
+YouTube degradation (re-encoding, blocky compression, mosquito noise) much
+better than `realesrgan-x4plus` and won't over-sharpen halos around stage
+lighting or drum kits.
 
 xinntao publishes this model only as PyTorch weights
 ([`realesr-general-x4v3.pth`](https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth),
@@ -68,12 +74,21 @@ The community-converted ncnn versions used by Upscayl are mirrored at
 
 The downloader renames them to `realesr-general-x4v3.{bin,param}` and
 `realesr-general-wdn-x4v3.{bin,param}` so the `-n` argument matches the
-PyTorch model name documented upstream.
+PyTorch model name documented upstream. Both files are tracked in this repo
+(roughly 5 MB total) so a fresh clone has working defaults.
 
 | Model name (`-n`) | Scale | Notes |
 |---|---|---|
-| `realesr-general-x4v3` | 4× (also 1/2/3) | **Best general default for noisy YouTube sources.** Smaller and faster than `x4plus`; supports `-dn 0..1` denoise strength. Use `-dn 0.3–0.5` for typical 480p, `-dn 0.6–1.0` for 240p–360p. |
-| `realesr-general-wdn-x4v3` | 4× | "WDN" = stronger denoising twin used by the `-dn` interpolation in the original CLI. The downloader installs it for completeness. |
+| `realesr-general-x4v3` | 4× | **Pipeline default.** Best general model for compressed sources. Smaller and faster than `x4plus`. |
+| `realesr-general-wdn-x4v3` | 4× | "WDN" twin = stronger denoising. Use this for 240p–360p YouTube where the v3 model still leaves visible blocking. Pass via `MODEL=realesr-general-wdn-x4v3` (POSIX) or `-Model realesr-general-wdn-x4v3` (PowerShell). |
+
+> **Why no `-dn` flag?** xinntao's PyTorch CLI (`inference_realesrgan.py`)
+> exposes `-dn 0.0..1.0` to interpolate at runtime between the v3 and WDN
+> weights. The standalone `realesrgan-ncnn-vulkan` binary (which this pipeline
+> uses) does **not** implement that flag — see the binary's `-h` output. To get
+> the equivalent on ncnn, switch the model name itself: pick `v3` for less
+> denoise, `wdn-v3` for more. If you need fine-grained interpolation, run the
+> Python pipeline directly.
 
 License: BSD-3-Clause (weights), conversion script is community-maintained.
 

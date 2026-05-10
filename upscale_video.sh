@@ -6,8 +6,11 @@
 #   ./upscale_video.sh <input_video> <input_audio> [youtube_url]
 #
 # Environment overrides:
-#   SCALE=4|2  OUTPUT_FORMAT=mkv|mp4  MODEL=realesrgan-x4plus
+#   SCALE=4|2  OUTPUT_FORMAT=mkv|mp4  MODEL=realesr-general-x4v3
 #   SKIP_EXTRACT=1  SKIP_UPSCALE=1  SKIP_AUDIO_SYNC=1
+#
+# For stronger denoising on very noisy YouTube sources, override:
+#   MODEL=realesr-general-wdn-x4v3
 #
 
 set -euo pipefail
@@ -19,7 +22,7 @@ source "${REPO_ROOT}/lib/pipeline.sh"
 
 SCALE="${SCALE:-4}"
 OUTPUT_FORMAT="${OUTPUT_FORMAT:-mkv}"
-MODEL="${MODEL:-realesrgan-x4plus}"
+MODEL="${MODEL:-realesr-general-x4v3}"
 
 if [[ "$SCALE" != "2" && "$SCALE" != "4" ]]; then
   echo "SCALE must be 2 or 4" >&2

@@ -20,7 +20,7 @@ fi
 INPUT_FRAMES_DIR="$(cd "$1" && pwd)"
 OUTPUT_UPSCALED_DIR="${2:-}"
 SCALE="${3:-4}"
-MODEL="${4:-realesrgan-x4plus}"
+MODEL="${4:-realesr-general-x4v3}"
 
 if [[ -z "$OUTPUT_UPSCALED_DIR" ]]; then
   OUTPUT_UPSCALED_DIR="$(dirname "$INPUT_FRAMES_DIR")/tmp_upscaled_${SCALE}x"
