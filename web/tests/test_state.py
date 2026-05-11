@@ -1,5 +1,3 @@
-import pytest
-
 from web.state import IllegalTransition, JobKind, JobState, can_transition
 
 
@@ -41,6 +39,11 @@ def test_can_transition_to_failed_or_cancelled_from_any_active_state():
                 JobState.UPSCALING, JobState.MUXING]:
         assert can_transition(src, JobState.FAILED)
         assert can_transition(src, JobState.CANCELLED)
+
+
+def test_can_transition_to_failed_or_cancelled_from_created():
+    assert can_transition(JobState.CREATED, JobState.FAILED)
+    assert can_transition(JobState.CREATED, JobState.CANCELLED)
 
 
 def test_cannot_transition_from_terminal_state():
