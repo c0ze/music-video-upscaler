@@ -3,6 +3,14 @@
 # Real-ESRGAN Windows binary is not redistributed here; place:
 #   windows\realesrgan-ncnn-vulkan.exe
 # alongside the scripts (see README).
+#
+# Optional flags:
+#   -WithWeb   Also create web\.venv and install web UI dependencies.
+
+[CmdletBinding()]
+param(
+    [switch]$WithWeb
+)
 
 $ErrorActionPreference = "Continue"
 
@@ -56,6 +64,25 @@ if (Test-Path $re) {
 }
 else {
     Write-Host "  realesrgan-ncnn-vulkan: NOT FOUND under windows\ — add the portable build." -ForegroundColor Yellow
+}
+
+if ($WithWeb) {
+    Write-Host ""
+    Write-Host "Installing web UI dependencies..."
+    $RepoRoot = Split-Path -Parent $PSScriptRoot
+    $WebDir = Join-Path $RepoRoot "web"
+    $Venv = Join-Path $WebDir ".venv"
+    $PythonCmd = $null
+    if (Test-CommandExists python) { $PythonCmd = "python" }
+    elseif (Test-CommandExists python3) { $PythonCmd = "python3" }
+    if ($null -eq $PythonCmd) {
+        Write-Host "WARNING: python not found; skipping web UI install." -ForegroundColor Yellow
+    } else {
+        & $PythonCmd -m venv $Venv
+        & (Join-Path $Venv "Scripts\pip.exe") install --upgrade pip | Out-Null
+        & (Join-Path $Venv "Scripts\pip.exe") install -r (Join-Path $WebDir "requirements.txt")
+        Write-Host "Web UI installed. Run with: web\run_server.ps1"
+    }
 }
 
 Write-Host ""

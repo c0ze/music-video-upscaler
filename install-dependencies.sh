@@ -9,6 +9,28 @@
 #
 set -euo pipefail
 
+WITH_WEB=0
+ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    --with-web) WITH_WEB=1 ;;
+    -h|--help)
+      cat <<USAGE
+Usage: $(basename "$0") [--with-web]
+
+Options:
+  --with-web   Also create web/.venv and install web UI dependencies.
+USAGE
+      exit 0 ;;
+    *) ARGS+=("$arg") ;;
+  esac
+done
+if [[ ${#ARGS[@]} -gt 0 ]]; then
+  set -- "${ARGS[@]}"
+else
+  set --
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLS="${ROOT}/tools"
 mkdir -p "${TOOLS}"
@@ -183,6 +205,20 @@ elif [[ -x "${TOOLS}/realesrgan-ncnn-vulkan" ]]; then
   log "  realesrgan-ncnn-vulkan: OK (${TOOLS}/realesrgan-ncnn-vulkan)"
 else
   log "  realesrgan-ncnn-vulkan: NOT INSTALLED (required for upscaling)"
+fi
+
+if [[ "$WITH_WEB" -eq 1 ]]; then
+  log ""
+  log "Installing web UI dependencies..."
+  PYTHON_BIN="${PYTHON:-python3}"
+  if ! have_cmd "$PYTHON_BIN"; then
+    log "WARNING: '$PYTHON_BIN' not found; skipping web UI install."
+  else
+    "$PYTHON_BIN" -m venv "${ROOT}/web/.venv"
+    "${ROOT}/web/.venv/bin/pip" install --upgrade pip >/dev/null
+    "${ROOT}/web/.venv/bin/pip" install -r "${ROOT}/web/requirements.txt"
+    log "Web UI installed. Run with: ./web/run_server.sh"
+  fi
 fi
 
 log ""
