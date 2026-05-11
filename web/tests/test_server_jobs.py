@@ -1,10 +1,15 @@
 import asyncio
+import shutil
+import subprocess
 import time
 
 import pytest
 from fastapi.testclient import TestClient
 
 from web.server import build_app
+
+
+_HAS_FFMPEG = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
 
 
 @pytest.fixture
@@ -167,3 +172,54 @@ def test_post_jobs_rejects_non_flac_audio(client, monkeypatch, tmp_path):
         files={"audio_file": ("track.mp3", b"\x00\x00", "audio/mpeg")},
     )
     assert r.status_code == 422
+
+
+@pytest.mark.skipif(not _HAS_FFMPEG, reason="ffmpeg/ffprobe required")
+def test_post_jobs_rejects_flac_with_garbage_bytes(client, monkeypatch, tmp_path):
+    """Suffix-only validation is not enough; ffprobe must catch fake .flac bytes."""
+    _patch_orchestration(monkeypatch)
+    out = tmp_path / "out"
+    r = client.post(
+        "/api/jobs",
+        data={
+            "url": "https://x.test/a", "model": "realesr-general-x4v3",
+            "scale": "4", "output_format": "mkv",
+            "output_dir": str(out),
+        },
+        files={"audio_file": ("track.flac", b"NOT REALLY AUDIO" * 64, "audio/flac")},
+    )
+    assert r.status_code == 400, r.text
+    assert "ffprobe" in r.json()["detail"].lower()
+
+
+@pytest.mark.skipif(not _HAS_FFMPEG, reason="ffmpeg/ffprobe required")
+def test_post_jobs_accepts_valid_flac_upload(client, monkeypatch, tmp_path):
+    """A genuine FLAC payload must pass ffprobe validation and create the job."""
+    _patch_orchestration(monkeypatch)
+    flac_path = tmp_path / "tiny.flac"
+    subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-y",
+            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+            "-t", "0.5",
+            "-c:a", "flac",
+            str(flac_path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    flac_bytes = flac_path.read_bytes()
+
+    out = tmp_path / "out"
+    r = client.post(
+        "/api/jobs",
+        data={
+            "url": "https://x.test/a", "model": "realesr-general-x4v3",
+            "scale": "4", "output_format": "mkv",
+            "output_dir": str(out),
+        },
+        files={"audio_file": ("track.flac", flac_bytes, "audio/flac")},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "job_id" in body

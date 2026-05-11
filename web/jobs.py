@@ -373,17 +373,16 @@ class JobManager:
             if rc != 0:
                 raise RuntimeError("muxing failed")
 
-            # Symlink (or copy on Windows) into user-visible output dir.
+            # Copy into the user-visible output dir. We deliberately do NOT
+            # symlink: workdir cleanup eventually deletes the source under
+            # ~/.cache/music-video-upscaler/ and a symlink would dangle.
             # Stage into a temp path next to the destination, then atomic
             # os.replace so a failure cannot leave the user's output gone.
             final_dest = output_dir / output_name
             tmp_dest = output_dir / f".{output_name}.tmp.{os.getpid()}"
             if tmp_dest.exists() or tmp_dest.is_symlink():
                 tmp_dest.unlink()
-            try:
-                tmp_dest.symlink_to(internal_out)
-            except (OSError, NotImplementedError):
-                shutil.copy2(internal_out, tmp_dest)
+            shutil.copy2(internal_out, tmp_dest)
             os.replace(tmp_dest, final_dest)
 
             self.set_output(job_id, final_dest)

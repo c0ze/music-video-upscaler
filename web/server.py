@@ -30,6 +30,36 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 DEFAULT_MODELS_DIR = REPO_ROOT / "models"
 
 
+async def _ffprobe_validate_audio_bytes(data: bytes) -> None:
+    """Confirm the bytes contain at least one decodable audio stream.
+
+    Raises ValueError with a short reason string if validation fails.
+    Raises FileNotFoundError if ffprobe is not on PATH.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "ffprobe", "-v", "error",
+        "-select_streams", "a:0",
+        "-show_entries", "stream=codec_name",
+        "-of", "csv=p=0",
+        "-i", "pipe:0",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await proc.communicate(input=data)
+    except Exception:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        raise
+    if proc.returncode != 0 or not stdout.strip():
+        tail = stderr.decode("utf-8", "replace").strip().splitlines()
+        msg = tail[-1] if tail else "no decodable audio stream"
+        raise ValueError(f"audio_file failed ffprobe sanity check: {msg}")
+
+
 class ProbeRequest(BaseModel):
     url: str = Field(min_length=1)
 
@@ -120,9 +150,24 @@ def build_app(
             raise HTTPException(status_code=422, detail="scale must be 2 or 4")
         if not _URL_RE.match(url):
             raise HTTPException(status_code=422, detail="url must start with http(s)")
+
+        # Validate the uploaded audio (extension + ffprobe) BEFORE creating
+        # any state, so a bad upload doesn't burn the single active-job slot
+        # or leave a half-initialised workdir behind.
+        audio_bytes: Optional[bytes] = None
         if audio_file is not None and audio_file.filename:
             if not audio_file.filename.lower().endswith(".flac"):
                 raise HTTPException(status_code=422, detail="audio_file must be .flac")
+            audio_bytes = await audio_file.read()
+            try:
+                await _ffprobe_validate_audio_bytes(audio_bytes)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            except FileNotFoundError:
+                raise HTTPException(
+                    status_code=500,
+                    detail="ffprobe not found on PATH; cannot validate audio_file",
+                )
 
         out = Path(output_dir).expanduser() if output_dir else default_output_dir()
         try:
@@ -142,9 +187,9 @@ def build_app(
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
 
-        if audio_file is not None and audio_file.filename:
+        if audio_bytes is not None:
             target = workdir / "audio_override.flac"
-            target.write_bytes(await audio_file.read())
+            target.write_bytes(audio_bytes)
             job_manager.set_audio_override(job_id, "audio_override.flac")
 
         _spawn(job_manager.run_full_job(job_id, output_dir=out))

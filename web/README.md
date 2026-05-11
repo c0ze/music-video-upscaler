@@ -16,6 +16,12 @@ This creates `web/.venv` and installs the FastAPI/uvicorn dependencies into it
 on top of the normal pipeline tools (ffmpeg, ffprobe, yt-dlp,
 realesrgan-ncnn-vulkan).
 
+> **Windows note:** make sure a real Python from
+> [python.org](https://www.python.org/downloads/windows/) is on `PATH` before
+> running `-WithWeb`. The Windows-Store `python` shim that ships with
+> Windows 10/11 by default opens the Store on first invocation and will not
+> create the venv non-interactively.
+
 ## Run
 
 ```bash
