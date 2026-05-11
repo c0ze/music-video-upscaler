@@ -222,8 +222,12 @@ class JobManager:
                 StageEvent(stage=internal.value, status="done", extra=extra or {}),
             )
 
+        # Track which stage was active for accurate ErrorEvent reporting.
+        current_stage: str = JobState.CREATED.value
+
         try:
             # 1) DOWNLOAD via yt-dlp directly (server-owned stage)
+            current_stage = JobState.DOWNLOADING.value
             await _stage_started("downloading", JobState.DOWNLOADING)
             ytdlp = shutil.which("yt-dlp") or "yt-dlp"
             video_template = str(source_dir / "video.%(ext)s")
@@ -257,16 +261,23 @@ class JobManager:
             await _stage_done(JobState.DOWNLOADING, {"video": video_path.name, "audio": audio_path.name})
 
             # 2) PREPARING = sanitize + sync_audio
+            current_stage = JobState.PREPARING.value
             await _stage_started("preparing", JobState.PREPARING)
+            sanitize_cmd = stage_command("sanitize", [str(source_dir)])
+            run = StageRun(cmd=sanitize_cmd, cwd=REPO_ROOT, log_path=log, on_line=_line)
+            rc = await run_stage(run)
+            if rc != 0:
+                raise RuntimeError("preparing failed (sanitize)")
             sync_cmd = stage_command("sync_audio", [str(video_path), str(audio_path), rec.url])
             run = StageRun(cmd=sync_cmd, cwd=REPO_ROOT, log_path=log, on_line=_line)
             rc = await run_stage(run)
             if rc != 0:
-                raise RuntimeError("preparing failed")
+                raise RuntimeError("preparing failed (sync_audio)")
             synced_audio = video_path.with_name(f"{video_path.stem}_synced.flac")
             await _stage_done(JobState.PREPARING, {"synced_audio": synced_audio.name})
 
             # 3) EXTRACT
+            current_stage = JobState.EXTRACTING.value
             await _stage_started("extracting", JobState.EXTRACTING)
             ext_cmd = stage_command("extract", [str(video_path), str(frames_dir)])
             run = StageRun(cmd=ext_cmd, cwd=REPO_ROOT, log_path=log, on_line=_line)
@@ -278,6 +289,7 @@ class JobManager:
             await _stage_done(JobState.EXTRACTING, {"frame_count": frame_count})
 
             # 4) UPSCALE (with live thumbnail watcher)
+            current_stage = JobState.UPSCALING.value
             await _stage_started("upscaling", JobState.UPSCALING)
             stop = asyncio.Event()
             thumbgen = ThumbnailGenerator()
@@ -320,6 +332,7 @@ class JobManager:
             await _stage_done(JobState.UPSCALING)
 
             # 5) MUX
+            current_stage = JobState.MUXING.value
             await _stage_started("muxing", JobState.MUXING)
             output_name = (
                 f"{video_path.stem}_realesrgan_{rec.model}_{rec.scale}x_HQ.{rec.output_format}"
@@ -333,14 +346,18 @@ class JobManager:
             if rc != 0:
                 raise RuntimeError("muxing failed")
 
-            # Symlink (or copy on Windows) into user-visible output dir
+            # Symlink (or copy on Windows) into user-visible output dir.
+            # Stage into a temp path next to the destination, then atomic
+            # os.replace so a failure cannot leave the user's output gone.
             final_dest = output_dir / output_name
+            tmp_dest = output_dir / f".{output_name}.tmp.{os.getpid()}"
+            if tmp_dest.exists() or tmp_dest.is_symlink():
+                tmp_dest.unlink()
             try:
-                if final_dest.exists() or final_dest.is_symlink():
-                    final_dest.unlink()
-                final_dest.symlink_to(internal_out)
+                tmp_dest.symlink_to(internal_out)
             except (OSError, NotImplementedError):
-                shutil.copy2(internal_out, final_dest)
+                shutil.copy2(internal_out, tmp_dest)
+            os.replace(tmp_dest, final_dest)
 
             self.set_output(job_id, final_dest)
             self.set_state(job_id, JobState.COMPLETE)
@@ -353,6 +370,6 @@ class JobManager:
                 self.set_state(job_id, JobState.FAILED)
             except IllegalTransition:
                 pass
-            await self.publish(job_id, ErrorEvent(stage=rec.state, message=str(exc)))
+            await self.publish(job_id, ErrorEvent(stage=current_stage, message=str(exc)))
         finally:
             await self.close_subscribers(job_id)

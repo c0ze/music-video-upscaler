@@ -104,6 +104,34 @@ async def test_run_full_job_publishes_stage_events(tmp_path, monkeypatch):
 
     stages = [getattr(e, "stage", None) for e in events if isinstance(e, StageEvent)]
     assert "downloading" in stages
+    assert "preparing" in stages
     assert "upscaling" in stages
     assert "muxing" in stages
     assert any(isinstance(e, CompleteEvent) for e in events)
+
+
+@pytest.mark.asyncio
+async def test_run_full_job_error_event_carries_failing_stage(tmp_path, monkeypatch):
+    """ErrorEvent.stage should report the stage that actually failed,
+    not the post-set_state(FAILED) value."""
+    _patch_stages(monkeypatch, fail_at="upscale")
+    mgr = JobManager(workdir_root=tmp_path / "jobs")
+    job_id, _ = mgr.register_job(
+        kind="full", url="u", model="m", scale=4, output_format="mkv",
+    )
+
+    events = []
+    sub = await mgr.subscribe(job_id)
+
+    async def collect():
+        async for e in sub:
+            events.append(e)
+
+    collector = asyncio.create_task(collect())
+    await mgr.run_full_job(job_id, output_dir=tmp_path / "out")
+    await asyncio.sleep(0.05)
+    collector.cancel()
+
+    err_events = [e for e in events if isinstance(e, ErrorEvent)]
+    assert err_events, "expected an ErrorEvent on failure"
+    assert err_events[0].stage == "upscaling"
