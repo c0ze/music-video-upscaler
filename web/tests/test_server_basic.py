@@ -81,3 +81,14 @@ def test_static_css_is_served(client):
     r = client.get("/static/style.css")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/css")
+
+
+def test_static_js_is_served_and_referenced(client):
+    """index.html must reference /static/app.js, and the file must be served."""
+    page = client.get("/")
+    assert "/static/app.js" in page.text
+    js = client.get("/static/app.js")
+    assert js.status_code == 200
+    # JS is served as application/javascript or text/javascript depending on
+    # platform mimetypes; either is acceptable.
+    assert "javascript" in js.headers["content-type"]
