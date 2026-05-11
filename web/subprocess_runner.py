@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import signal
 import sys
@@ -9,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable, Dict, List, Optional
 
+_log = logging.getLogger(__name__)
 
 LineHandler = Optional[Callable[[str], Awaitable[None]]]
 
@@ -77,6 +79,6 @@ async def run_stage(run: StageRun) -> int:
                 try:
                     await run.on_line(line)
                 except Exception:
-                    pass
+                    _log.exception("on_line callback raised; continuing stream")
 
     return await proc.wait()
