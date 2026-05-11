@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -26,6 +26,7 @@ from web.workdir import default_output_dir
 
 _log = logging.getLogger(__name__)
 _URL_RE = re.compile(r"^https?://", re.IGNORECASE)
+_FRAME_ID_RE = re.compile(r"^[0-9]{6}$")
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 DEFAULT_MODELS_DIR = REPO_ROOT / "models"
@@ -201,6 +202,68 @@ def build_app(
             job_manager.set_state(job_id, JobState.CANCELLED)
         except Exception as exc:
             _log.debug("cancel state transition failed for %s: %s", job_id, exc)
+        return {"ok": True}
+
+    @app.get("/api/jobs/{job_id}/events")
+    async def job_events(job_id: str):
+        try:
+            sub = await job_manager.subscribe(job_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="job not found")
+
+        async def stream():
+            yield "retry: 3000\n\n"
+            async for evt in sub:
+                yield evt.to_sse()
+
+        return StreamingResponse(stream(), media_type="text/event-stream")
+
+    @app.get("/api/jobs/{job_id}/frames/{kind}/{frame_id}")
+    def get_frame(job_id: str, kind: str, frame_id: str):
+        if kind not in ("src", "up"):
+            raise HTTPException(status_code=400, detail="kind must be src or up")
+        if not _FRAME_ID_RE.match(frame_id):
+            raise HTTPException(status_code=400, detail="invalid frame_id")
+        try:
+            workdir = job_manager.workdir.get_workdir(job_id)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="job not found")
+        path = workdir / "thumbs" / f"{kind}_{frame_id}.jpg"
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="thumbnail not found")
+        return FileResponse(path, media_type="image/jpeg")
+
+    @app.get("/api/jobs/{job_id}/output")
+    def get_output(job_id: str):
+        try:
+            snap = job_manager.get_job(job_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="job not found")
+        out = snap.get("output_path")
+        if not out or not Path(out).is_file():
+            raise HTTPException(status_code=404, detail="output not available")
+        return FileResponse(out, filename=Path(out).name)
+
+    @app.post("/api/jobs/{job_id}/reveal")
+    def reveal(job_id: str):
+        try:
+            snap = job_manager.get_job(job_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="job not found")
+        out = snap.get("output_path")
+        if not out:
+            raise HTTPException(status_code=404, detail="no output yet")
+        target = str(Path(out).parent)
+        import subprocess
+        try:
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", target])
+            elif sys.platform == "win32":
+                subprocess.Popen(["explorer", target])
+            else:
+                subprocess.Popen(["xdg-open", target])
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
         return {"ok": True}
 
     app.state.job_manager = job_manager
