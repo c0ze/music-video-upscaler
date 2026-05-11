@@ -7,3 +7,10 @@ carcass
 At The Gates
 samael
 METAL_VIDS_UPSCALED_FLAC
+
+# Web frontend
+web/.venv/
+web/__pycache__/
+web/**/__pycache__/
+web/.pytest_cache/
+web/tests/fixtures/tiny.mkv
