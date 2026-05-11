@@ -71,4 +71,13 @@ def test_probe_returns_400_on_probe_error(client, monkeypatch):
 
 def test_index_html_is_served(client):
     r = client.get("/")
-    assert r.status_code in (200, 404)
+    # The index.html and style.css are now committed; / must return the page.
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    assert "Music Video Upscaler" in r.text
+
+
+def test_static_css_is_served(client):
+    r = client.get("/static/style.css")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/css")

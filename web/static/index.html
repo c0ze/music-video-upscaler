@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Music Video Upscaler</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main>
+    <h1>Music Video Upscaler</h1>
+
+    <section id="health-banner" class="banner hidden"></section>
+
+    <section id="panel-source" class="panel">
+      <h2>1. Source</h2>
+      <div class="row">
+        <input id="url" type="url" placeholder="https://www.youtube.com/watch?v=..." />
+        <button id="btn-probe">Probe</button>
+      </div>
+      <p id="probe-summary" class="summary"></p>
+      <p id="probe-error" class="error hidden"></p>
+    </section>
+
+    <section id="panel-settings" class="panel disabled">
+      <h2>2. Settings</h2>
+      <div class="row">
+        <label>Model
+          <select id="model"></select>
+        </label>
+        <label>Scale
+          <select id="scale">
+            <option value="2">2x</option>
+            <option value="4">4x</option>
+          </select>
+        </label>
+        <label>Format
+          <select id="output-format">
+            <option value="mkv">mkv</option>
+            <option value="mp4">mp4</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label>Output folder
+          <input id="output-dir" type="text" placeholder="(default per-OS)" />
+        </label>
+      </div>
+      <div class="row">
+        <label>Optional FLAC override
+          <input id="audio-file" type="file" accept=".flac" />
+        </label>
+      </div>
+      <div class="row">
+        <button id="btn-preview" class="secondary">Preview 5 frames</button>
+        <button id="btn-run" class="primary">Run</button>
+      </div>
+    </section>
+
+    <section id="panel-preview" class="panel hidden">
+      <h2>3. Preview</h2>
+      <p class="summary" id="preview-caption"></p>
+      <div id="preview-grid" class="grid"></div>
+    </section>
+
+    <section id="panel-progress" class="panel hidden">
+      <h2>4. Job</h2>
+      <ol id="stages" class="stages">
+        <li data-stage="downloading">Downloading</li>
+        <li data-stage="preparing">Sync</li>
+        <li data-stage="extracting">Extract</li>
+        <li data-stage="upscaling">Upscale</li>
+        <li data-stage="muxing">Mux</li>
+      </ol>
+      <div class="progress">
+        <div id="progress-bar"></div>
+        <span id="progress-text">Starting…</span>
+      </div>
+      <div id="thumb-strip" class="strip"></div>
+      <details>
+        <summary>Log</summary>
+        <pre id="log"></pre>
+      </details>
+      <div class="row">
+        <button id="btn-cancel" class="danger">Cancel</button>
+      </div>
+    </section>
+
+    <section id="panel-done" class="panel hidden">
+      <h2>5. Done</h2>
+      <p id="done-summary" class="summary"></p>
+      <div class="row">
+        <a id="btn-download" class="button">Download</a>
+        <button id="btn-reveal">Reveal in file manager</button>
+        <button id="btn-new">New job</button>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
