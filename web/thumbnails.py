@@ -45,8 +45,12 @@ class ThumbnailGenerator:
             "-q:v", "5",
             str(dst),
             stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
         )
-        await proc.wait()
+        _, stderr = await proc.communicate()
         if proc.returncode != 0 or not dst.is_file():
-            raise RuntimeError(f"ffmpeg thumbnail generation failed for {src}")
+            tail = (stderr or b"").decode("utf-8", errors="replace").strip().splitlines()[-5:]
+            detail = " | ".join(tail) if tail else "no ffmpeg stderr"
+            raise RuntimeError(
+                f"ffmpeg thumbnail generation failed for {src} (rc={proc.returncode}): {detail}"
+            )

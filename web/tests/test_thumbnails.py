@@ -49,3 +49,20 @@ async def test_ffmpeg_fallback_when_pillow_disabled(tmp_path):
     await gen.generate(src, dst, width=360)
     assert dst.is_file()
     assert dst.stat().st_size > 0
+
+    from PIL import Image
+    with Image.open(dst) as im:
+        assert im.size[0] == 360
+
+
+@pytest.mark.asyncio
+async def test_ffmpeg_failure_surfaces_stderr(tmp_path):
+    src = tmp_path / "missing.png"  # never created
+    dst = tmp_path / "thumb.jpg"
+
+    gen = ThumbnailGenerator(prefer_pillow=False)
+    with pytest.raises(RuntimeError) as excinfo:
+        await gen.generate(src, dst, width=360)
+    msg = str(excinfo.value)
+    assert "missing.png" in msg
+    assert "rc=" in msg
