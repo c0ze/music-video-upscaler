@@ -64,6 +64,12 @@ def build_app(
     models_dir = (models_dir or DEFAULT_MODELS_DIR).resolve()
     job_manager = JobManager(workdir_root=workdir_root)
 
+    # Best-effort cleanup of stale workdirs on boot (keeps recent N + non-terminal).
+    try:
+        job_manager.workdir.cleanup()
+    except OSError as exc:
+        _log.debug("workdir cleanup at startup failed: %s", exc)
+
     if STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
