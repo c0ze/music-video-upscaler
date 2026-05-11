@@ -79,7 +79,7 @@ async def test_run_full_job_failure_marks_failed(tmp_path, monkeypatch):
 
     snap = mgr.get_job(job_id)
     assert snap["state"] == JobState.FAILED.value
-    assert "upscale" in (snap["error"] or "").lower()
+    assert "upscaling" in (snap["error"] or "").lower()
 
 
 @pytest.mark.asyncio

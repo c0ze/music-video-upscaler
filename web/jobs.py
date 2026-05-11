@@ -316,7 +316,7 @@ class JobManager:
                 stop.set()
                 await watcher
             if rc != 0:
-                raise RuntimeError("upscale failed")
+                raise RuntimeError("upscaling failed")
             await _stage_done(JobState.UPSCALING)
 
             # 5) MUX
