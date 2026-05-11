@@ -56,3 +56,49 @@ async def test_run_preview_job_extracts_5_frames(tmp_path, monkeypatch):
     assert snap["state"] == JobState.COMPLETE.value
     thumbs = list((workdir / "thumbs").iterdir())
     assert len(thumbs) >= 10  # 5 src + 5 up
+
+
+@pytest.mark.asyncio
+async def test_preview_skips_sanitize_sync_audio_and_mux(tmp_path, monkeypatch):
+    """Preview is a quick visual sample; it must NOT run audio or mux stages."""
+    from web import jobs as jobs_module
+
+    invoked = []
+
+    async def fake_run_stage(run):
+        cmd = run.cmd
+        invoked.append(cmd[0])
+        run.process = type("P", (), {"returncode": 0, "pid": 1})()
+        if cmd[0].endswith("yt-dlp") or cmd[0] == "yt-dlp":
+            (run.cwd / "video.mp4").write_bytes(b"\x00" * 64)
+        elif "02_extract" in cmd[0]:
+            frames_dir = Path(cmd[2])
+            frames_dir.mkdir(parents=True, exist_ok=True)
+            for i in range(1, 6):
+                (frames_dir / f"{i:06d}.png").write_bytes(b"\x00" * 32)
+        elif "03_upscale" in cmd[0]:
+            up_dir = Path(cmd[2])
+            up_dir.mkdir(parents=True, exist_ok=True)
+            for i in range(1, 6):
+                (up_dir / f"{i:06d}.png").write_bytes(b"\x00" * 32)
+        return 0
+
+    monkeypatch.setattr(jobs_module, "run_stage", fake_run_stage)
+
+    async def fake_generate(self, src, dst, width=360):
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(b"\xff\xd8\xff")
+
+    monkeypatch.setattr(jobs_module.ThumbnailGenerator, "generate", fake_generate)
+
+    mgr = JobManager(workdir_root=tmp_path / "jobs")
+    job_id, _ = mgr.register_job(
+        kind="preview", url="https://x.test/v", model="m",
+        scale=4, output_format="mkv",
+    )
+    await mgr.run_preview_job(job_id)
+
+    joined = " ".join(invoked)
+    assert "00_sanitize" not in joined, "preview must not call sanitize"
+    assert "01_sync_audio" not in joined, "preview must not call sync_audio"
+    assert "04_mux" not in joined, "preview must not call mux"

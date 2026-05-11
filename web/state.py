@@ -45,6 +45,10 @@ def can_transition(src: JobState, dst: JobState) -> bool:
         return False
     if dst in (JobState.FAILED, JobState.CANCELLED):
         return src in _ACTIVE or src == JobState.CREATED
+    # COMPLETE is a terminal success state; reachable from any active stage,
+    # so preview/short-circuit jobs do not need to walk the full chain.
+    if dst == JobState.COMPLETE:
+        return src in _ACTIVE or src == JobState.MUXING
     if src in _FORWARD_INDEX and dst in _FORWARD_INDEX:
         return _FORWARD_INDEX[dst] == _FORWARD_INDEX[src] + 1
     return False

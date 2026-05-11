@@ -375,6 +375,8 @@ class JobManager:
             await self.close_subscribers(job_id)
 
     async def run_preview_job(self, job_id: str) -> None:
+        """Quick visual preview: download a 10s clip, extract a few frames,
+        upscale them, and emit thumbnails. No audio sync, no muxing."""
         rec = self._records[job_id]
         workdir = self.workdir.get_workdir(job_id)
         log = self.workdir.log_path(job_id)
@@ -388,6 +390,7 @@ class JobManager:
         current_stage: str = JobState.CREATED.value
 
         try:
+            # 1) Short download (first ~10s)
             current_stage = JobState.DOWNLOADING.value
             self.set_state(job_id, JobState.DOWNLOADING)
             await self.publish(job_id, StageEvent(stage="downloading", status="started"))
@@ -404,23 +407,13 @@ class JobManager:
                 raise RuntimeError("preview download failed")
             await self.publish(job_id, StageEvent(stage="downloading", status="done"))
             video_path = next(source_dir.glob("video.*"))
-            audio_path = source_dir / f"audio{video_path.suffix}"
-            shutil.copy2(video_path, audio_path)
 
-            current_stage = JobState.PREPARING.value
-            self.set_state(job_id, JobState.PREPARING)
-            await self.publish(job_id, StageEvent(stage="preparing", status="started"))
-            sanitize_cmd = stage_command("sanitize", [str(source_dir)])
-            rc = await run_stage(StageRun(cmd=sanitize_cmd, cwd=REPO_ROOT, log_path=log, on_line=_line))
-            if rc != 0:
-                raise RuntimeError("preview preparing failed (sanitize)")
-            sync_cmd = stage_command("sync_audio", [str(video_path), str(audio_path), rec.url])
-            rc = await run_stage(StageRun(cmd=sync_cmd, cwd=REPO_ROOT, log_path=log, on_line=_line))
-            if rc != 0:
-                raise RuntimeError("preview preparing failed (sync_audio)")
-            await self.publish(job_id, StageEvent(stage="preparing", status="done"))
-
+            # 2) Extract frames
             current_stage = JobState.EXTRACTING.value
+            # The state machine permits non-terminal -> COMPLETE shortcuts,
+            # so preview can skip PREPARING entirely; advance through the
+            # forward chain via PREPARING for state-machine compliance.
+            self.set_state(job_id, JobState.PREPARING)
             self.set_state(job_id, JobState.EXTRACTING)
             await self.publish(job_id, StageEvent(stage="extracting", status="started"))
             ext_cmd = stage_command("extract", [str(video_path), str(frames_dir)])
@@ -432,6 +425,7 @@ class JobManager:
             if not all_frames:
                 raise RuntimeError("no frames extracted")
 
+            # 3) Pick 5 evenly-spaced frames
             n = min(5, len(all_frames))
             picks = [
                 all_frames[int(i * (len(all_frames) - 1) / max(n - 1, 1))]
@@ -444,6 +438,7 @@ class JobManager:
             for p in picks:
                 shutil.copy2(p, picks_dir / p.name)
 
+            # 4) Upscale picks
             current_stage = JobState.UPSCALING.value
             self.set_state(job_id, JobState.UPSCALING)
             await self.publish(job_id, StageEvent(stage="upscaling", status="started"))
@@ -456,10 +451,18 @@ class JobManager:
                 raise RuntimeError("preview upscale failed")
             await self.publish(job_id, StageEvent(stage="upscaling", status="done"))
 
+            # 5) Generate src + up thumbnails
             thumbgen = ThumbnailGenerator()
             for p in picks:
                 src_thumb = workdir / "thumbs" / f"src_{p.stem}.jpg"
                 await thumbgen.generate(p, src_thumb)
+                await self.publish(
+                    job_id,
+                    ThumbnailEvent(
+                        frame_id=p.stem, kind="src",
+                        url=f"/api/jobs/{job_id}/frames/src/{p.stem}",
+                    ),
+                )
                 up_src = upscaled_dir / p.name
                 if up_src.is_file():
                     up_thumb = workdir / "thumbs" / f"up_{p.stem}.jpg"
@@ -471,18 +474,8 @@ class JobManager:
                             url=f"/api/jobs/{job_id}/frames/up/{p.stem}",
                         ),
                     )
-                await self.publish(
-                    job_id,
-                    ThumbnailEvent(
-                        frame_id=p.stem, kind="src",
-                        url=f"/api/jobs/{job_id}/frames/src/{p.stem}",
-                    ),
-                )
 
-            current_stage = JobState.MUXING.value
-            self.set_state(job_id, JobState.MUXING)
-            await self.publish(job_id, StageEvent(stage="muxing", status="started"))
-            await self.publish(job_id, StageEvent(stage="muxing", status="done"))
+            # 6) Short-circuit straight to COMPLETE (no muxing for previews)
             self.set_state(job_id, JobState.COMPLETE)
             await self.publish(
                 job_id,

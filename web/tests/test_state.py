@@ -46,6 +46,19 @@ def test_can_transition_to_failed_or_cancelled_from_created():
     assert can_transition(JobState.CREATED, JobState.CANCELLED)
 
 
+def test_can_short_circuit_to_complete_from_any_active_state():
+    """Preview jobs and similar pipelines may finish without walking the full
+    DOWNLOADING → … → MUXING chain. COMPLETE is reachable from any active stage."""
+    for src in [JobState.DOWNLOADING, JobState.PREPARING, JobState.EXTRACTING,
+                JobState.UPSCALING, JobState.MUXING]:
+        assert can_transition(src, JobState.COMPLETE), f"{src} -> COMPLETE should be allowed"
+
+
+def test_cannot_complete_from_created_directly():
+    """CREATED is pre-work; jumping straight to COMPLETE is meaningless."""
+    assert not can_transition(JobState.CREATED, JobState.COMPLETE)
+
+
 def test_cannot_transition_from_terminal_state():
     for src in [JobState.COMPLETE, JobState.FAILED, JobState.CANCELLED]:
         for dst in JobState:
