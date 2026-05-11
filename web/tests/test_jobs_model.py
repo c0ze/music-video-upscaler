@@ -63,7 +63,17 @@ async def test_only_one_active_job(tmp_path):
 async def test_release_after_terminal_allows_next(tmp_path):
     mgr = JobManager(workdir_root=tmp_path)
     job_id, _ = mgr.register_job(kind="full", url="x", model="m", scale=4, output_format="mkv")
-    mgr.set_state(job_id, JobState.COMPLETE)
+    # Walk the forward chain to a terminal state (CREATED -> COMPLETE is illegal
+    # by design; the state machine requires going through the pipeline).
+    for s in (
+        JobState.DOWNLOADING,
+        JobState.PREPARING,
+        JobState.EXTRACTING,
+        JobState.UPSCALING,
+        JobState.MUXING,
+        JobState.COMPLETE,
+    ):
+        mgr.set_state(job_id, s)
     # Now a new one is allowed.
     mgr.register_job(kind="full", url="y", model="m", scale=4, output_format="mkv")
 

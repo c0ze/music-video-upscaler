@@ -80,7 +80,7 @@ class JobManager:
     def set_state(self, job_id: str, new_state: JobState) -> None:
         rec = self._records[job_id]
         cur = JobState(rec.state)
-        if not can_transition(cur, new_state) and not (not cur.is_terminal() and new_state.is_terminal()):
+        if not can_transition(cur, new_state):
             raise IllegalTransition(cur, new_state)
         rec.state = new_state.value
         self._persist(job_id)
