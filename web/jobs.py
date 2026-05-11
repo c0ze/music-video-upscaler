@@ -373,3 +373,131 @@ class JobManager:
             await self.publish(job_id, ErrorEvent(stage=current_stage, message=str(exc)))
         finally:
             await self.close_subscribers(job_id)
+
+    async def run_preview_job(self, job_id: str) -> None:
+        rec = self._records[job_id]
+        workdir = self.workdir.get_workdir(job_id)
+        log = self.workdir.log_path(job_id)
+        source_dir = workdir / "source"
+        frames_dir = workdir / "tmp_frames_preview"
+        upscaled_dir = workdir / f"tmp_upscaled_preview_{rec.scale}x"
+
+        async def _line(line: str) -> None:
+            await self.publish(job_id, LogEvent(line=line))
+
+        current_stage: str = JobState.CREATED.value
+
+        try:
+            current_stage = JobState.DOWNLOADING.value
+            self.set_state(job_id, JobState.DOWNLOADING)
+            await self.publish(job_id, StageEvent(stage="downloading", status="started"))
+            ytdlp = shutil.which("yt-dlp") or "yt-dlp"
+            dl_cmd = [
+                ytdlp, "--no-warnings",
+                "--download-sections", "*0-10",
+                "-f", "bv*+ba/b", "--merge-output-format", "mp4",
+                "-o", str(source_dir / "video.%(ext)s"),
+                rec.url,
+            ]
+            rc = await run_stage(StageRun(cmd=dl_cmd, cwd=source_dir, log_path=log, on_line=_line))
+            if rc != 0:
+                raise RuntimeError("preview download failed")
+            await self.publish(job_id, StageEvent(stage="downloading", status="done"))
+            video_path = next(source_dir.glob("video.*"))
+            audio_path = source_dir / f"audio{video_path.suffix}"
+            shutil.copy2(video_path, audio_path)
+
+            current_stage = JobState.PREPARING.value
+            self.set_state(job_id, JobState.PREPARING)
+            await self.publish(job_id, StageEvent(stage="preparing", status="started"))
+            sanitize_cmd = stage_command("sanitize", [str(source_dir)])
+            rc = await run_stage(StageRun(cmd=sanitize_cmd, cwd=REPO_ROOT, log_path=log, on_line=_line))
+            if rc != 0:
+                raise RuntimeError("preview preparing failed (sanitize)")
+            sync_cmd = stage_command("sync_audio", [str(video_path), str(audio_path), rec.url])
+            rc = await run_stage(StageRun(cmd=sync_cmd, cwd=REPO_ROOT, log_path=log, on_line=_line))
+            if rc != 0:
+                raise RuntimeError("preview preparing failed (sync_audio)")
+            await self.publish(job_id, StageEvent(stage="preparing", status="done"))
+
+            current_stage = JobState.EXTRACTING.value
+            self.set_state(job_id, JobState.EXTRACTING)
+            await self.publish(job_id, StageEvent(stage="extracting", status="started"))
+            ext_cmd = stage_command("extract", [str(video_path), str(frames_dir)])
+            rc = await run_stage(StageRun(cmd=ext_cmd, cwd=REPO_ROOT, log_path=log, on_line=_line))
+            if rc != 0:
+                raise RuntimeError("preview extract failed")
+            await self.publish(job_id, StageEvent(stage="extracting", status="done"))
+            all_frames = sorted(frames_dir.glob("*.png"))
+            if not all_frames:
+                raise RuntimeError("no frames extracted")
+
+            n = min(5, len(all_frames))
+            picks = [
+                all_frames[int(i * (len(all_frames) - 1) / max(n - 1, 1))]
+                for i in range(n)
+            ]
+            picks_dir = workdir / "tmp_frames_picks"
+            picks_dir.mkdir(parents=True, exist_ok=True)
+            for p in picks_dir.glob("*.png"):
+                p.unlink()
+            for p in picks:
+                shutil.copy2(p, picks_dir / p.name)
+
+            current_stage = JobState.UPSCALING.value
+            self.set_state(job_id, JobState.UPSCALING)
+            await self.publish(job_id, StageEvent(stage="upscaling", status="started"))
+            up_cmd = stage_command(
+                "upscale",
+                [str(picks_dir), str(upscaled_dir), str(rec.scale), rec.model],
+            )
+            rc = await run_stage(StageRun(cmd=up_cmd, cwd=REPO_ROOT, log_path=log, on_line=_line))
+            if rc != 0:
+                raise RuntimeError("preview upscale failed")
+            await self.publish(job_id, StageEvent(stage="upscaling", status="done"))
+
+            thumbgen = ThumbnailGenerator()
+            for p in picks:
+                src_thumb = workdir / "thumbs" / f"src_{p.stem}.jpg"
+                await thumbgen.generate(p, src_thumb)
+                up_src = upscaled_dir / p.name
+                if up_src.is_file():
+                    up_thumb = workdir / "thumbs" / f"up_{p.stem}.jpg"
+                    await thumbgen.generate(up_src, up_thumb)
+                    await self.publish(
+                        job_id,
+                        ThumbnailEvent(
+                            frame_id=p.stem, kind="up",
+                            url=f"/api/jobs/{job_id}/frames/up/{p.stem}",
+                        ),
+                    )
+                await self.publish(
+                    job_id,
+                    ThumbnailEvent(
+                        frame_id=p.stem, kind="src",
+                        url=f"/api/jobs/{job_id}/frames/src/{p.stem}",
+                    ),
+                )
+
+            current_stage = JobState.MUXING.value
+            self.set_state(job_id, JobState.MUXING)
+            await self.publish(job_id, StageEvent(stage="muxing", status="started"))
+            await self.publish(job_id, StageEvent(stage="muxing", status="done"))
+            self.set_state(job_id, JobState.COMPLETE)
+            await self.publish(
+                job_id,
+                CompleteEvent(
+                    output=str(workdir / "thumbs"),
+                    size_bytes=0,
+                ),
+            )
+
+        except Exception as exc:
+            self.set_error(job_id, str(exc))
+            try:
+                self.set_state(job_id, JobState.FAILED)
+            except IllegalTransition:
+                pass
+            await self.publish(job_id, ErrorEvent(stage=current_stage, message=str(exc)))
+        finally:
+            await self.close_subscribers(job_id)
