@@ -3,18 +3,20 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import os
+import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
-from web.events import (
-    CompleteEvent, ErrorEvent, LogEvent, ProgressEvent, StageEvent, ThumbnailEvent,
-)
 from web.state import IllegalTransition, JobState, can_transition
 from web.workdir import WorkdirManager
 
 Event = Any  # one of the *Event dataclasses from web.events
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -40,7 +42,6 @@ class JobManager:
         self._records: Dict[str, JobRecord] = {}
         self._subscribers: Dict[str, List[asyncio.Queue]] = {}
         self._active_job_id: Optional[str] = None
-        self._lock = asyncio.Lock()
 
     # --- registration -------------------------------------------------
 
@@ -140,18 +141,38 @@ class JobManager:
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
-                pass
+                _log.warning("subscriber queue full for job %s; dropping event %s",
+                             job_id, type(event).__name__)
 
     async def close_subscribers(self, job_id: str) -> None:
         for q in list(self._subscribers.get(job_id, [])):
-            try:
-                q.put_nowait(None)
-            except asyncio.QueueFull:
-                pass
+            # Drain oldest entries until the sentinel fits, so a slow consumer
+            # cannot prevent shutdown.
+            while True:
+                try:
+                    q.put_nowait(None)
+                    break
+                except asyncio.QueueFull:
+                    try:
+                        q.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
 
     # --- persistence --------------------------------------------------
 
     def _persist(self, job_id: str) -> None:
         rec = self._records[job_id]
         path = self.workdir.state_path(job_id)
-        path.write_text(json.dumps(asdict(rec), indent=2))
+        payload = json.dumps(asdict(rec), indent=2)
+        # Atomic write: tmp file in the same dir, then os.replace.
+        tmp_fd, tmp_name = tempfile.mkstemp(prefix=".state.", dir=str(path.parent))
+        try:
+            with os.fdopen(tmp_fd, "w") as f:
+                f.write(payload)
+            os.replace(tmp_name, path)
+        except Exception:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
