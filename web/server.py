@@ -3,10 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 import shutil
-import signal
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -193,21 +191,21 @@ def build_app(
         if JobState(snap["state"]).is_terminal():
             return {"already_terminal": True}
 
-        # Best-effort: signal the running stage process if a pid was recorded.
-        pid = snap.get("pid")
-        if pid:
-            try:
-                if sys.platform == "win32":
-                    os.kill(pid, signal.SIGTERM)
-                else:
-                    os.killpg(os.getpgid(pid), signal.SIGTERM)
-            except (ProcessLookupError, PermissionError, OSError) as exc:
-                _log.debug("cancel signal failed for pid %s: %s", pid, exc)
-
+        # Mark cancelled first so the orchestrator's next set_state() raises
+        # IllegalTransition cleanly instead of overwriting our CANCELLED.
         try:
             job_manager.set_state(job_id, JobState.CANCELLED)
         except Exception as exc:
             _log.debug("cancel state transition failed for %s: %s", job_id, exc)
+
+        # Then SIGTERM the live stage subprocess (proc-group on POSIX),
+        # 10s grace, then SIGKILL. cancel_active_run is idempotent and
+        # returns False if no stage is currently in flight.
+        try:
+            await job_manager.cancel_active_run(job_id)
+        except Exception as exc:
+            _log.warning("cancel_active_run failed for %s: %s", job_id, exc)
+
         return {"ok": True}
 
     @app.get("/api/jobs/{job_id}/events")

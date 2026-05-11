@@ -46,7 +46,6 @@ class JobRecord:
     stage_progress: Dict[str, Dict[str, int]] = field(default_factory=dict)
     output_path: Optional[str] = None
     error: Optional[str] = None
-    pid: Optional[int] = None
 
 
 class JobManager:
@@ -55,6 +54,10 @@ class JobManager:
         self._records: Dict[str, JobRecord] = {}
         self._subscribers: Dict[str, List[asyncio.Queue]] = {}
         self._active_job_id: Optional[str] = None
+        # The currently-running stage subprocess for each job, tracked so
+        # /api/jobs/{id}/cancel can deliver SIGTERM (proc-group on POSIX,
+        # Process.terminate on Windows) directly to the live process tree.
+        self._active_runs: Dict[str, StageRun] = {}
 
     # --- registration -------------------------------------------------
 
@@ -98,6 +101,10 @@ class JobManager:
             raise IllegalTransition(cur, new_state)
         rec.state = new_state.value
         self._persist(job_id)
+        # Release the single-active-job slot once the job reaches a terminal
+        # state so subsequent submissions are accepted without restarting.
+        if new_state.is_terminal() and self._active_job_id == job_id:
+            self._active_job_id = None
 
     def set_progress(self, job_id: str, stage: str, current: int, total: int) -> None:
         rec = self._records[job_id]
@@ -112,9 +119,31 @@ class JobManager:
         self._records[job_id].error = message
         self._persist(job_id)
 
-    def set_pid(self, job_id: str, pid: Optional[int]) -> None:
-        self._records[job_id].pid = pid
-        self._persist(job_id)
+    def set_active_run(self, job_id: str, run: Optional[StageRun]) -> None:
+        """Track the currently-running StageRun so cancel_active_run can reach it."""
+        if run is None:
+            self._active_runs.pop(job_id, None)
+        else:
+            self._active_runs[job_id] = run
+
+    async def cancel_active_run(self, job_id: str, grace_seconds: float = 10.0) -> bool:
+        """SIGTERM the live stage (proc-group on POSIX), 10s grace, then SIGKILL.
+
+        Returns True if a live run was found and signalled, False otherwise.
+        """
+        run = self._active_runs.get(job_id)
+        if run is None:
+            return False
+        await run.cancel(grace_seconds=grace_seconds)
+        return True
+
+    async def _run_tracked(self, job_id: str, run: StageRun) -> int:
+        """Register the StageRun as the job's active run for the duration of run_stage."""
+        self.set_active_run(job_id, run)
+        try:
+            return await run_stage(run)
+        finally:
+            self.set_active_run(job_id, None)
 
     def set_audio_override(self, job_id: str, relative_name: str) -> None:
         self._records[job_id].audio_override = relative_name
@@ -238,9 +267,7 @@ class JobManager:
                 "-o", video_template, rec.url,
             ]
             run = StageRun(cmd=dl_cmd, cwd=source_dir, log_path=log, on_line=_line)
-            self.set_pid(job_id, None)
-            rc = await run_stage(run)
-            self.set_pid(job_id, run.process.pid if run.process else None)
+            rc = await self._run_tracked(job_id, run)
             if rc != 0:
                 raise RuntimeError("downloading failed")
 
@@ -253,7 +280,7 @@ class JobManager:
                     "-o", audio_template, rec.url,
                 ]
                 run = StageRun(cmd=audio_dl_cmd, cwd=source_dir, log_path=log, on_line=_line)
-                rc = await run_stage(run)
+                rc = await self._run_tracked(job_id, run)
                 if rc != 0:
                     raise RuntimeError("downloading audio failed")
                 audio_path = next(source_dir.glob("audio.*"))
@@ -265,12 +292,12 @@ class JobManager:
             await _stage_started("preparing", JobState.PREPARING)
             sanitize_cmd = stage_command("sanitize", [str(source_dir)])
             run = StageRun(cmd=sanitize_cmd, cwd=REPO_ROOT, log_path=log, on_line=_line)
-            rc = await run_stage(run)
+            rc = await self._run_tracked(job_id, run)
             if rc != 0:
                 raise RuntimeError("preparing failed (sanitize)")
             sync_cmd = stage_command("sync_audio", [str(video_path), str(audio_path), rec.url])
             run = StageRun(cmd=sync_cmd, cwd=REPO_ROOT, log_path=log, on_line=_line)
-            rc = await run_stage(run)
+            rc = await self._run_tracked(job_id, run)
             if rc != 0:
                 raise RuntimeError("preparing failed (sync_audio)")
             synced_audio = video_path.with_name(f"{video_path.stem}_synced.flac")
@@ -281,7 +308,7 @@ class JobManager:
             await _stage_started("extracting", JobState.EXTRACTING)
             ext_cmd = stage_command("extract", [str(video_path), str(frames_dir)])
             run = StageRun(cmd=ext_cmd, cwd=REPO_ROOT, log_path=log, on_line=_line)
-            rc = await run_stage(run)
+            rc = await self._run_tracked(job_id, run)
             if rc != 0:
                 raise RuntimeError("extracting failed")
             frame_count = sum(1 for _ in frames_dir.glob("*.png"))
@@ -323,7 +350,7 @@ class JobManager:
             )
             run = StageRun(cmd=up_cmd, cwd=REPO_ROOT, log_path=log, on_line=_line)
             try:
-                rc = await run_stage(run)
+                rc = await self._run_tracked(job_id, run)
             finally:
                 stop.set()
                 await watcher
@@ -342,7 +369,7 @@ class JobManager:
                 "mux", [str(upscaled_dir), str(synced_audio), str(internal_out), str(video_path)],
             )
             run = StageRun(cmd=mux_cmd, cwd=REPO_ROOT, log_path=log, on_line=_line)
-            rc = await run_stage(run)
+            rc = await self._run_tracked(job_id, run)
             if rc != 0:
                 raise RuntimeError("muxing failed")
 
@@ -369,8 +396,15 @@ class JobManager:
             try:
                 self.set_state(job_id, JobState.FAILED)
             except IllegalTransition:
+                # Already terminal (the cancel handler beat us here). The
+                # cancel path has already published its own LogEvent and
+                # transitioned to CANCELLED — adding an ErrorEvent on top
+                # would mislead the UI into reporting a failure.
                 pass
-            await self.publish(job_id, ErrorEvent(stage=current_stage, message=str(exc)))
+            else:
+                await self.publish(
+                    job_id, ErrorEvent(stage=current_stage, message=str(exc))
+                )
         finally:
             await self.close_subscribers(job_id)
 
@@ -402,7 +436,10 @@ class JobManager:
                 "-o", str(source_dir / "video.%(ext)s"),
                 rec.url,
             ]
-            rc = await run_stage(StageRun(cmd=dl_cmd, cwd=source_dir, log_path=log, on_line=_line))
+            rc = await self._run_tracked(
+                job_id,
+                StageRun(cmd=dl_cmd, cwd=source_dir, log_path=log, on_line=_line),
+            )
             if rc != 0:
                 raise RuntimeError("preview download failed")
             await self.publish(job_id, StageEvent(stage="downloading", status="done"))
@@ -417,7 +454,10 @@ class JobManager:
             self.set_state(job_id, JobState.EXTRACTING)
             await self.publish(job_id, StageEvent(stage="extracting", status="started"))
             ext_cmd = stage_command("extract", [str(video_path), str(frames_dir)])
-            rc = await run_stage(StageRun(cmd=ext_cmd, cwd=REPO_ROOT, log_path=log, on_line=_line))
+            rc = await self._run_tracked(
+                job_id,
+                StageRun(cmd=ext_cmd, cwd=REPO_ROOT, log_path=log, on_line=_line),
+            )
             if rc != 0:
                 raise RuntimeError("preview extract failed")
             await self.publish(job_id, StageEvent(stage="extracting", status="done"))
@@ -446,7 +486,10 @@ class JobManager:
                 "upscale",
                 [str(picks_dir), str(upscaled_dir), str(rec.scale), rec.model],
             )
-            rc = await run_stage(StageRun(cmd=up_cmd, cwd=REPO_ROOT, log_path=log, on_line=_line))
+            rc = await self._run_tracked(
+                job_id,
+                StageRun(cmd=up_cmd, cwd=REPO_ROOT, log_path=log, on_line=_line),
+            )
             if rc != 0:
                 raise RuntimeError("preview upscale failed")
             await self.publish(job_id, StageEvent(stage="upscaling", status="done"))
@@ -490,7 +533,12 @@ class JobManager:
             try:
                 self.set_state(job_id, JobState.FAILED)
             except IllegalTransition:
+                # See run_full_job: cancel raced the next stage transition,
+                # state is already CANCELLED, no ErrorEvent should follow.
                 pass
-            await self.publish(job_id, ErrorEvent(stage=current_stage, message=str(exc)))
+            else:
+                await self.publish(
+                    job_id, ErrorEvent(stage=current_stage, message=str(exc))
+                )
         finally:
             await self.close_subscribers(job_id)
