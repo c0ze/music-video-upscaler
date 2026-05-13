@@ -14,3 +14,8 @@ web/__pycache__/
 web/**/__pycache__/
 web/.pytest_cache/
 web/tests/fixtures/tiny.mkv
+
+# Local Real-ESRGAN ncnn-vulkan builds (downloaded or extracted; not vendored)
+tools/realesrgan-ncnn-vulkan
+tools/realesrgan-ncnn-vulkan-macos.zip
+tools/realesrgan-ncnn-vulkan-macos/
