@@ -39,6 +39,34 @@ have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 log() { printf '%s\n' "$*"; }
 
+resolve_realesrgan_env_bin() {
+  local env_bin="${REALESRGAN_BIN:-}"
+  if [[ -z "${env_bin}" ]]; then
+    return 1
+  fi
+  if [[ "${env_bin}" == "~/"* ]]; then
+    env_bin="${HOME}/${env_bin#~/}"
+  fi
+  if [[ -x "${env_bin}" ]]; then
+    printf '%s\n' "${env_bin}"
+    return 0
+  fi
+  return 1
+}
+
+has_realesrgan() {
+  if resolve_realesrgan_env_bin >/dev/null; then
+    return 0
+  fi
+  if [[ -x "${TOOLS}/realesrgan-ncnn-vulkan" ]]; then
+    return 0
+  fi
+  if [[ -x "${ROOT}/windows/realesrgan-ncnn-vulkan.exe" ]]; then
+    return 0
+  fi
+  have_cmd realesrgan-ncnn-vulkan
+}
+
 need_sudo() {
   if [[ "$(id -u)" -eq 0 ]]; then
     return 1
@@ -170,8 +198,8 @@ else
 fi
 
 if [[ "${INSTALL_REALESRGAN:-}" == "1" ]]; then
-  if [[ -x "${TOOLS}/realesrgan-ncnn-vulkan" ]]; then
-    log "Real-ESRGAN already present in tools/"
+  if has_realesrgan; then
+    log "Real-ESRGAN already available."
   elif [[ "${OS}" == Linux && "${ARCH}" == x86_64 ]]; then
     download_realesrgan_linux_x64
   else
@@ -180,11 +208,15 @@ if [[ "${INSTALL_REALESRGAN:-}" == "1" ]]; then
     log "Windows: place realesrgan-ncnn-vulkan.exe under windows\\ (see README)."
   fi
 else
-  if ! have_cmd realesrgan-ncnn-vulkan && [[ ! -x "${TOOLS}/realesrgan-ncnn-vulkan" ]]; then
-    log "Real-ESRGAN ncnn Vulkan not found."
-    log "Linux x86_64: re-run with INSTALL_REALESRGAN=1"
-    log "Windows: place portable build under windows\\"
-    log "macOS: install or build a Vulkan binary and export REALESRGAN_BIN=... or put it in tools/"
+  if ! has_realesrgan; then
+    if [[ "${OS}" == "Darwin" ]]; then
+      "${ROOT}/install-realesrgan-macos.sh"
+    else
+      log "Real-ESRGAN ncnn Vulkan not found."
+      log "Linux x86_64: re-run with INSTALL_REALESRGAN=1"
+      log "Windows: place portable build under windows\\"
+      log "macOS: install or build a Vulkan binary and export REALESRGAN_BIN=... or put it in tools/"
+    fi
   fi
 fi
 
@@ -199,10 +231,18 @@ elif [[ -x "${TOOLS}/yt-dlp" ]]; then
 else
   log "  yt-dlp: MISSING"
 fi
-if have_cmd realesrgan-ncnn-vulkan; then
-  log "  realesrgan-ncnn-vulkan: OK (PATH)"
-elif [[ -x "${TOOLS}/realesrgan-ncnn-vulkan" ]]; then
-  log "  realesrgan-ncnn-vulkan: OK (${TOOLS}/realesrgan-ncnn-vulkan)"
+if has_realesrgan; then
+  if env_realesrgan_bin="$(resolve_realesrgan_env_bin)"; then
+    log "  realesrgan-ncnn-vulkan: OK (REALESRGAN_BIN=${env_realesrgan_bin})"
+  elif [[ -x "${TOOLS}/realesrgan-ncnn-vulkan" ]]; then
+    log "  realesrgan-ncnn-vulkan: OK (${TOOLS}/realesrgan-ncnn-vulkan)"
+  elif [[ -x "${ROOT}/windows/realesrgan-ncnn-vulkan.exe" ]]; then
+    log "  realesrgan-ncnn-vulkan: OK (${ROOT}/windows/realesrgan-ncnn-vulkan.exe)"
+  elif have_cmd realesrgan-ncnn-vulkan; then
+    log "  realesrgan-ncnn-vulkan: OK (PATH)"
+  else
+    log "  realesrgan-ncnn-vulkan: OK"
+  fi
 else
   log "  realesrgan-ncnn-vulkan: NOT INSTALLED (required for upscaling)"
 fi

@@ -4,7 +4,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
+import re
 import shutil
 import tempfile
 from dataclasses import asdict, dataclass, field
@@ -22,6 +24,7 @@ from web.events import (
 )
 from web.live_watcher import watch_upscale_dir
 from web.platform_info import REPO_ROOT, stage_command
+from web.probe import ProbeError, probe
 from web.state import IllegalTransition, JobState, can_transition
 from web.subprocess_runner import StageRun, run_stage
 from web.thumbnails import ThumbnailGenerator
@@ -30,6 +33,58 @@ from web.workdir import WorkdirManager
 Event = Any  # one of the *Event dataclasses from web.events
 
 _log = logging.getLogger(__name__)
+
+
+def _thumbnail_stride(frame_count: int, *, target_updates: int = 8, minimum: int = 200) -> int:
+    if frame_count <= 0:
+        return minimum
+    return max(minimum, math.ceil(frame_count / target_updates))
+
+
+def _safe_output_stem(title: str | None, *, fallback: str) -> str:
+    candidate = title if title is not None else fallback
+    cleaned = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", candidate)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .")
+    return cleaned or fallback
+
+
+async def watch_upscale_progress(
+    manager: JobManager,
+    job_id: str,
+    upscaled_dir: Path,
+    frame_count: int,
+    stop_event: asyncio.Event,
+    poll_interval: float = 1.0,
+) -> None:
+    last_count = 0
+    upscaled_dir.mkdir(parents=True, exist_ok=True)
+
+    while True:
+        try:
+            count = sum(
+                1
+                for entry in os.scandir(upscaled_dir)
+                if entry.is_file() and entry.name.endswith(".png")
+            )
+        except FileNotFoundError:
+            count = 0
+
+        count = min(count, frame_count)
+        if count > last_count:
+            manager.set_progress(job_id, "upscaling", count, frame_count)
+            await manager.publish(
+                job_id,
+                ProgressEvent(stage="upscaling", current=count, total=frame_count),
+            )
+            last_count = count
+
+        if stop_event.is_set():
+            break
+
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=poll_interval)
+        except asyncio.TimeoutError:
+            continue
 
 
 @dataclass
@@ -225,7 +280,7 @@ class JobManager:
         self,
         job_id: str,
         output_dir: Path,
-        thumb_every_n: int = 200,
+        thumb_every_n: int | None = None,
         on_thumbnail: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> None:
         rec = self._records[job_id]
@@ -312,7 +367,11 @@ class JobManager:
             if rc != 0:
                 raise RuntimeError("extracting failed")
             frame_count = sum(1 for _ in frames_dir.glob("*.png"))
-            self.set_progress(job_id, "extract", frame_count, frame_count)
+            self.set_progress(job_id, "extracting", frame_count, frame_count)
+            await self.publish(
+                job_id,
+                ProgressEvent(stage="extracting", current=frame_count, total=frame_count),
+            )
             await _stage_done(JobState.EXTRACTING, {"frame_count": frame_count})
 
             # 4) UPSCALE (with live thumbnail watcher)
@@ -320,6 +379,7 @@ class JobManager:
             await _stage_started("upscaling", JobState.UPSCALING)
             stop = asyncio.Event()
             thumbgen = ThumbnailGenerator()
+            thumb_stride = _thumbnail_stride(frame_count) if thumb_every_n is None else thumb_every_n
 
             async def _on_frame(frame_id: str) -> None:
                 src = upscaled_dir / f"{frame_id}.png"
@@ -330,7 +390,6 @@ class JobManager:
                     await thumbgen.generate(src, dst)
                 except Exception:
                     return
-                self.set_progress(job_id, "upscale", int(frame_id), frame_count)
                 await self.publish(
                     job_id,
                     ThumbnailEvent(
@@ -341,8 +400,18 @@ class JobManager:
                 if on_thumbnail:
                     await on_thumbnail(frame_id)
 
-            watcher = asyncio.create_task(
-                watch_upscale_dir(upscaled_dir, thumb_every_n, _on_frame, stop, poll_interval=1.0)
+            progress_watcher = asyncio.create_task(
+                watch_upscale_progress(
+                    self,
+                    job_id,
+                    upscaled_dir,
+                    frame_count,
+                    stop,
+                    poll_interval=0.5,
+                )
+            )
+            thumbnail_watcher = asyncio.create_task(
+                watch_upscale_dir(upscaled_dir, thumb_stride, _on_frame, stop, poll_interval=1.0)
             )
             up_cmd = stage_command(
                 "upscale",
@@ -353,7 +422,8 @@ class JobManager:
                 rc = await self._run_tracked(job_id, run)
             finally:
                 stop.set()
-                await watcher
+                await progress_watcher
+                await thumbnail_watcher
             if rc != 0:
                 raise RuntimeError("upscaling failed")
             await _stage_done(JobState.UPSCALING)
@@ -361,9 +431,14 @@ class JobManager:
             # 5) MUX
             current_stage = JobState.MUXING.value
             await _stage_started("muxing", JobState.MUXING)
-            output_name = (
-                f"{video_path.stem}_realesrgan_{rec.model}_{rec.scale}x_HQ.{rec.output_format}"
-            )
+            title = None
+            try:
+                title = probe(rec.url).title
+            except ProbeError as exc:
+                _log.debug("title probe failed for %s: %s", rec.url, exc)
+            except Exception as exc:
+                _log.debug("unexpected title probe failure for %s: %s", rec.url, exc)
+            output_name = f"{_safe_output_stem(title, fallback=video_path.stem)}.{rec.output_format}"
             internal_out = out_workdir / output_name
             mux_cmd = stage_command(
                 "mux", [str(upscaled_dir), str(synced_audio), str(internal_out), str(video_path)],

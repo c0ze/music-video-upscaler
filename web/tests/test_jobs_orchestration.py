@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from web.events import CompleteEvent, ErrorEvent, StageEvent
-from web.jobs import JobManager
+from web.events import CompleteEvent, ErrorEvent, ProgressEvent, StageEvent, ThumbnailEvent
+from web.jobs import JobManager, _safe_output_stem
 from web.state import JobState
 
 
@@ -65,6 +65,56 @@ async def test_run_full_job_happy_path(tmp_path, monkeypatch):
     assert snap["state"] == JobState.COMPLETE.value
     assert snap["output_path"]
     assert Path(snap["output_path"]).is_file()
+
+
+def test_safe_output_stem_sanitizes_video_title():
+    assert _safe_output_stem("AC/DC: Live?", fallback="video") == "AC_DC_ Live_"
+
+
+@pytest.mark.asyncio
+async def test_run_full_job_uses_video_title_for_output_name(tmp_path, monkeypatch):
+    _patch_stages(monkeypatch)
+    from web import jobs as jobs_module
+    from web.probe import ProbeResult
+
+    def fake_probe(url, timeout=30.0):
+        return ProbeResult(
+            title="Some Music Video",
+            duration=10.0,
+            width=854,
+            height=480,
+            fps=24.0,
+            recommended_scale=4,
+        )
+
+    monkeypatch.setattr(jobs_module, "probe", fake_probe)
+    mgr = JobManager(workdir_root=tmp_path / "jobs")
+    job_id, _ = mgr.register_job(
+        kind="full",
+        url="https://x.test/v",
+        model="realesr-general-x4v3",
+        scale=4,
+        output_format="mkv",
+    )
+    out_dir = tmp_path / "out"
+
+    events = []
+    sub = await mgr.subscribe(job_id)
+
+    async def collect():
+        async for e in sub:
+            events.append(e)
+
+    collector = asyncio.create_task(collect())
+    await mgr.run_full_job(job_id, output_dir=out_dir)
+    await asyncio.sleep(0.05)
+    collector.cancel()
+
+    snap = mgr.get_job(job_id)
+    assert Path(snap["output_path"]).name == "Some Music Video.mkv"
+    complete = [e for e in events if isinstance(e, CompleteEvent)]
+    assert complete
+    assert Path(complete[-1].output).name == "Some Music Video.mkv"
 
 
 @pytest.mark.asyncio
@@ -135,3 +185,59 @@ async def test_run_full_job_error_event_carries_failing_stage(tmp_path, monkeypa
     err_events = [e for e in events if isinstance(e, ErrorEvent)]
     assert err_events, "expected an ErrorEvent on failure"
     assert err_events[0].stage == "upscaling"
+
+
+@pytest.mark.asyncio
+async def test_run_full_job_emits_progress_even_when_thumbnails_are_sparse(tmp_path, monkeypatch):
+    from web import jobs as jobs_module
+
+    async def fake_run_stage(run):
+        cmd = run.cmd
+        run.process = type("P", (), {"returncode": 0, "pid": 12345})()
+        if "yt-dlp" in cmd[0] or cmd[0].endswith("yt-dlp"):
+            (run.cwd / "video.mp4").write_bytes(b"\x00")
+            (run.cwd / "audio.m4a").write_bytes(b"\x00")
+        elif "01_sync_audio" in cmd[0]:
+            video = Path(cmd[1])
+            (video.parent / f"{video.stem}_synced.flac").write_bytes(b"\x00")
+        elif "02_extract" in cmd[0]:
+            frames_dir = Path(cmd[2])
+            frames_dir.mkdir(parents=True, exist_ok=True)
+            for i in range(1, 5):
+                (frames_dir / f"{i:06d}.png").write_bytes(b"\x00")
+        elif "03_upscale" in cmd[0]:
+            up_dir = Path(cmd[2])
+            up_dir.mkdir(parents=True, exist_ok=True)
+            for i in range(1, 5):
+                (up_dir / f"{i:06d}.png").write_bytes(b"\x00")
+                await asyncio.sleep(0.03)
+        elif "04_mux" in cmd[0]:
+            output = Path(cmd[3])
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(b"\x00" * 1024)
+        return 0
+
+    monkeypatch.setattr(jobs_module, "run_stage", fake_run_stage)
+
+    mgr = JobManager(workdir_root=tmp_path / "jobs")
+    job_id, _ = mgr.register_job(kind="full", url="u", model="m", scale=4, output_format="mkv")
+
+    events = []
+    sub = await mgr.subscribe(job_id)
+
+    async def collect():
+        async for e in sub:
+            events.append(e)
+
+    collector = asyncio.create_task(collect())
+    await mgr.run_full_job(job_id, output_dir=tmp_path / "out", thumb_every_n=10_000)
+    await asyncio.sleep(0.05)
+    collector.cancel()
+
+    progress = [e for e in events if isinstance(e, ProgressEvent)]
+    thumbnails = [e for e in events if isinstance(e, ThumbnailEvent)]
+
+    assert any(e.stage == "extracting" and e.current == e.total for e in progress)
+    assert any(e.stage == "upscaling" and e.current < e.total for e in progress)
+    assert any(e.stage == "upscaling" and e.current == e.total for e in progress)
+    assert thumbnails == []

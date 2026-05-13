@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import shutil
 import sys
@@ -64,19 +65,28 @@ class ProbeRequest(BaseModel):
     url: str = Field(min_length=1)
 
 
+def _is_executable_file(path: Path) -> bool:
+    return path.is_file() and os.access(path, os.X_OK)
+
+
 def _check_health(models_dir: Path) -> dict:
     missing = []
     for tool in ("ffmpeg", "ffprobe", "yt-dlp"):
         if shutil.which(tool) is None:
             missing.append(tool)
-    realesr_candidates = [
+    env_realesrgan = os.environ.get("REALESRGAN_BIN")
+    repo_realesrgan_candidates = [
         REPO_ROOT / "tools" / "realesrgan-ncnn-vulkan",
         REPO_ROOT / "windows" / "realesrgan-ncnn-vulkan.exe",
     ]
-    if not (
-        shutil.which("realesrgan-ncnn-vulkan")
-        or any(p.exists() for p in realesr_candidates)
-    ):
+    has_realesrgan = False
+    if env_realesrgan:
+        has_realesrgan = _is_executable_file(Path(env_realesrgan).expanduser())
+    if not has_realesrgan:
+        has_realesrgan = any(_is_executable_file(p) for p in repo_realesrgan_candidates)
+    if not has_realesrgan:
+        has_realesrgan = shutil.which("realesrgan-ncnn-vulkan") is not None
+    if not has_realesrgan:
         missing.append("realesrgan-ncnn-vulkan")
     if not list_models(models_dir):
         missing.append("models")

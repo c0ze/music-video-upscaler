@@ -1,6 +1,9 @@
 const $ = (sel) => document.querySelector(sel);
 
+const THEME_KEY = "music-video-upscaler.theme";
+
 const els = {
+  themeToggle: $("#theme-toggle"),
   url: $("#url"),
   probe: $("#btn-probe"),
   probeSummary: $("#probe-summary"),
@@ -34,7 +37,36 @@ const els = {
 let activeJobId = null;
 let activeEventSource = null;
 
+function getSystemTheme() {
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function getStoredTheme() {
+  const value = localStorage.getItem(THEME_KEY);
+  return value === "light" || value === "dark" ? value : null;
+}
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  if (els.themeToggle) {
+    els.themeToggle.textContent = theme === "dark" ? "Dark" : "Light";
+    els.themeToggle.setAttribute(
+      "aria-label",
+      theme === "dark" ? "Theme: Dark" : "Theme: Light",
+    );
+  }
+}
+
+function onToggleTheme() {
+  const current = document.documentElement.dataset.theme || getSystemTheme();
+  const next = current === "dark" ? "light" : "dark";
+  localStorage.setItem(THEME_KEY, next);
+  applyTheme(next);
+}
+
 async function init() {
+  applyTheme(getStoredTheme() || getSystemTheme());
+
   try {
     const health = await (await fetch("/api/health")).json();
     if (!health.ok) {
@@ -79,6 +111,9 @@ async function init() {
   els.newJob.addEventListener("click", () => location.reload());
   els.model.addEventListener("change", clearPreview);
   els.scale.addEventListener("change", clearPreview);
+  if (els.themeToggle) {
+    els.themeToggle.addEventListener("click", onToggleTheme);
+  }
 }
 
 async function loadModels() {
@@ -209,6 +244,23 @@ async function onRun() {
   attachEvents(job_id);
 }
 
+function stageLabel(stage) {
+  switch (stage) {
+    case "downloading":
+      return "Downloading...";
+    case "preparing":
+      return "Syncing...";
+    case "extracting":
+      return "Extracting...";
+    case "upscaling":
+      return "Upscaling...";
+    case "muxing":
+      return "Muxing...";
+    default:
+      return "Starting...";
+  }
+}
+
 function showProgressPanel() {
   els.panelProgress.classList.remove("hidden");
   els.panelDone.classList.add("hidden");
@@ -242,14 +294,17 @@ function handleEvent(evt) {
           li.classList.add("done");
         } else {
           li.classList.add("active");
+          els.progressBar.style.width = "0%";
+          els.progressText.textContent = stageLabel(evt.stage);
         }
       }
     });
   }
   if (evt.type === "progress") {
     const pct = evt.total ? Math.round((evt.current / evt.total) * 100) : 0;
+    const label = stageLabel(evt.stage).replace("...", "");
     els.progressBar.style.width = pct + "%";
-    els.progressText.textContent = `${evt.stage} ${evt.current} / ${evt.total} (${pct}%)`;
+    els.progressText.textContent = `${label} ${evt.current} / ${evt.total} (${pct}%)`;
   }
   if (evt.type === "thumbnail" && evt.kind === "up") {
     const img = document.createElement("img");

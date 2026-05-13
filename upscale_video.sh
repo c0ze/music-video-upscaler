@@ -152,7 +152,7 @@ if [[ -z "${SKIP_AUDIO_SYNC:-}" ]]; then
   if awk -v x="$silence_to_add" 'BEGIN { exit !(x > 0.01) }'; then
     echo "  Adding ${silence_to_add}s silence to FLAC start..."
     SYNCED_AUDIO_PATH="${SOURCE_DIR}/${VIDEO_BASE}_synced.flac"
-    ffmpeg -y -hide_banner -nostdin -f lavfi -i "anullsrc=channel_layout=stereo:sample_rate=44100" -t "$silence_to_add" -i "$INPUT_AUDIO_PATH" \
+    ffmpeg -y -hide_banner -nostdin -f lavfi -t "$silence_to_add" -i "anullsrc=channel_layout=stereo:sample_rate=44100" -i "$INPUT_AUDIO_PATH" \
       -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1[out]" -map "[out]" -c:a flac "$SYNCED_AUDIO_PATH" >/dev/null 2>&1 || SYNCED_AUDIO_PATH="$INPUT_AUDIO_PATH"
   elif awk -v x="$silence_to_add" 'BEGIN { exit !(x < -0.01) }'; then
     echo "  FLAC has more leading silence than video; no padding applied."

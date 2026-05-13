@@ -261,7 +261,7 @@ if (-not $SkipAudioSync) {
         $SyncedAudioPath = Join-Path $SourceDir "${VideoBaseName}_synced.flac"
         
         # Native ffmpeg command with single-quoted complex filter
-        & ffmpeg -y -f lavfi -i "anullsrc=channel_layout=stereo:sample_rate=44100" -t $silenceToAdd -i "$InputAudioPath" -filter_complex '[0:a][1:a]concat=n=2:v=0:a=1[out]' -map '[out]' -c:a flac "$SyncedAudioPath" 2>&1 | Out-Null
+        & ffmpeg -y -f lavfi -t $silenceToAdd -i "anullsrc=channel_layout=stereo:sample_rate=44100" -i "$InputAudioPath" -filter_complex '[0:a][1:a]concat=n=2:v=0:a=1[out]' -map '[out]' -c:a flac "$SyncedAudioPath" 2>&1 | Out-Null
         
         if (Test-Path -LiteralPath $SyncedAudioPath) {
             Write-Host "  Created synced audio: $SyncedAudioPath" -ForegroundColor Green

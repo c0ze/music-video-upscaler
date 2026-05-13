@@ -57,7 +57,7 @@ Write-Host "Offset:        $addSilence s"
 if ($addSilence -gt 0.01) {
     Write-Host "Adding silence to FLAC..." -ForegroundColor Yellow
     # Native ffmpeg concat
-    & ffmpeg -y -f lavfi -i "anullsrc=channel_layout=stereo:sample_rate=44100" -t $addSilence -i $audioPath -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1[out]" -map "[out]" -c:a flac $syncedAudio 2>&1 | Out-Null
+    & ffmpeg -y -f lavfi -t $addSilence -i "anullsrc=channel_layout=stereo:sample_rate=44100" -i $audioPath -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1[out]" -map "[out]" -c:a flac $syncedAudio 2>&1 | Out-Null
     Write-Host "Created: $syncedAudio" -ForegroundColor Green
 }
 else {

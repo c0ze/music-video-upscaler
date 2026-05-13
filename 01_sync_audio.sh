@@ -55,7 +55,7 @@ echo "Offset:        $add_silence s"
 
 if awk -v x="$add_silence" 'BEGIN { exit !(x > 0.01) }'; then
   echo "Adding silence to FLAC..."
-  ffmpeg -y -hide_banner -nostdin -f lavfi -i "anullsrc=channel_layout=stereo:sample_rate=44100" -t "$add_silence" -i "$INPUT_AUDIO" \
+  ffmpeg -y -hide_banner -nostdin -f lavfi -t "$add_silence" -i "anullsrc=channel_layout=stereo:sample_rate=44100" -i "$INPUT_AUDIO" \
     -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1[out]" -map "[out]" -c:a flac "$synced_audio" >/dev/null 2>&1
   echo "Created: $synced_audio"
 else

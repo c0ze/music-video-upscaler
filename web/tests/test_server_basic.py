@@ -6,12 +6,16 @@ from fastapi.testclient import TestClient
 from web.server import build_app
 
 
-@pytest.fixture
-def client(tmp_path):
-    models_dir = tmp_path / "models"
+def _seed_models_dir(models_dir: Path) -> Path:
     models_dir.mkdir()
     (models_dir / "realesr-general-x4v3.param").write_text("")
     (models_dir / "realesr-general-x4v3.bin").write_bytes(b"")
+    return models_dir
+
+
+@pytest.fixture
+def client(tmp_path):
+    models_dir = _seed_models_dir(tmp_path / "models")
 
     app = build_app(models_dir=models_dir, workdir_root=tmp_path / "jobs")
     return TestClient(app)
@@ -23,6 +27,88 @@ def test_health_returns_200(client):
     body = r.json()
     assert "ok" in body
     assert "missing" in body
+
+
+def test_health_honors_executable_realesrgan_bin(tmp_path, monkeypatch):
+    from web import server as server_module
+
+    models_dir = _seed_models_dir(tmp_path / "models")
+    custom_bin = tmp_path / "custom" / "realesrgan-ncnn-vulkan"
+    custom_bin.parent.mkdir()
+    custom_bin.write_text("#!/bin/sh\n")
+    custom_bin.chmod(0o755)
+
+    monkeypatch.setattr(server_module, "REPO_ROOT", tmp_path)
+    monkeypatch.setenv("REALESRGAN_BIN", str(custom_bin))
+
+    def fake_which(tool):
+        if tool in ("ffmpeg", "ffprobe", "yt-dlp"):
+            return f"/usr/bin/{tool}"
+        if tool == "realesrgan-ncnn-vulkan":
+            return None
+        raise AssertionError(f"unexpected tool lookup: {tool}")
+
+    monkeypatch.setattr(server_module.shutil, "which", fake_which)
+
+    health = server_module._check_health(models_dir)
+
+    assert "realesrgan-ncnn-vulkan" not in health["missing"]
+
+
+def test_health_rejects_non_executable_repo_local_candidates(tmp_path, monkeypatch):
+    from web import server as server_module
+
+    models_dir = _seed_models_dir(tmp_path / "models")
+    repo_bin = tmp_path / "tools" / "realesrgan-ncnn-vulkan"
+    repo_bin.parent.mkdir()
+    repo_bin.write_text("#!/bin/sh\n")
+    repo_bin.chmod(0o644)
+    windows_bin = tmp_path / "windows" / "realesrgan-ncnn-vulkan.exe"
+    windows_bin.parent.mkdir()
+    windows_bin.write_text("not executable")
+    windows_bin.chmod(0o644)
+
+    monkeypatch.setattr(server_module, "REPO_ROOT", tmp_path)
+    monkeypatch.delenv("REALESRGAN_BIN", raising=False)
+
+    def fake_which(tool):
+        if tool in ("ffmpeg", "ffprobe", "yt-dlp"):
+            return f"/usr/bin/{tool}"
+        if tool == "realesrgan-ncnn-vulkan":
+            return None
+        raise AssertionError(f"unexpected tool lookup: {tool}")
+
+    monkeypatch.setattr(server_module.shutil, "which", fake_which)
+
+    health = server_module._check_health(models_dir)
+
+    assert "realesrgan-ncnn-vulkan" in health["missing"]
+
+
+def test_health_accepts_executable_repo_local_candidate(tmp_path, monkeypatch):
+    from web import server as server_module
+
+    models_dir = _seed_models_dir(tmp_path / "models")
+    repo_bin = tmp_path / "tools" / "realesrgan-ncnn-vulkan"
+    repo_bin.parent.mkdir()
+    repo_bin.write_text("#!/bin/sh\n")
+    repo_bin.chmod(0o755)
+
+    monkeypatch.setattr(server_module, "REPO_ROOT", tmp_path)
+    monkeypatch.delenv("REALESRGAN_BIN", raising=False)
+
+    def fake_which(tool):
+        if tool in ("ffmpeg", "ffprobe", "yt-dlp"):
+            return f"/usr/bin/{tool}"
+        if tool == "realesrgan-ncnn-vulkan":
+            return None
+        raise AssertionError(f"unexpected tool lookup: {tool}")
+
+    monkeypatch.setattr(server_module.shutil, "which", fake_which)
+
+    health = server_module._check_health(models_dir)
+
+    assert "realesrgan-ncnn-vulkan" not in health["missing"]
 
 
 def test_models_returns_default(client):
@@ -92,3 +178,30 @@ def test_static_js_is_served_and_referenced(client):
     # JS is served as application/javascript or text/javascript depending on
     # platform mimetypes; either is acceptable.
     assert "javascript" in js.headers["content-type"]
+
+
+def test_index_html_contains_theme_toggle(client):
+    r = client.get("/")
+    assert r.status_code == 200
+    assert 'id="theme-toggle"' in r.text
+    assert 'id="theme-label"' in r.text
+
+
+def test_static_js_contains_theme_bootstrap(client):
+    js = client.get("/static/app.js")
+    assert js.status_code == 200
+    body = js.text
+    assert "music-video-upscaler.theme" in body
+    assert "prefers-color-scheme: dark" in body
+
+
+def test_static_js_contains_stage_progress_labels(client):
+    js = client.get("/static/app.js")
+    assert js.status_code == 200
+    body = js.text
+    assert "Downloading..." in body
+    assert "Syncing..." in body
+    assert "Extracting..." in body
+    assert "Upscaling..." in body
+    assert "Muxing..." in body
+    assert "function stageLabel" in body

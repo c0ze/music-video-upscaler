@@ -16,6 +16,12 @@ This creates `web/.venv` and installs the FastAPI/uvicorn dependencies into it
 on top of the normal pipeline tools (ffmpeg, ffprobe, yt-dlp,
 realesrgan-ncnn-vulkan).
 
+On macOS, `./install-dependencies.sh` now downloads the upstream
+`realesrgan-ncnn-vulkan` archive into `tools/` automatically when the binary is
+missing. That also applies when you run `./install-dependencies.sh --with-web`.
+
+If you need to rerun only that step, run `./install-realesrgan-macos.sh`.
+
 > **Windows note:** make sure a real Python from
 > [python.org](https://www.python.org/downloads/windows/) is on `PATH` before
 > running `-WithWeb`. The Windows-Store `python` shim that ships with
